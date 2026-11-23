@@ -21,7 +21,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from aetheris_everyone import (__version__, agent, conversations, history, ollama_setup, paths,
-                               providers, settings, system)
+                               providers, settings, system, websearch)
 
 MAX_UPLOAD = 200 * 1024 * 1024
 
@@ -79,6 +79,7 @@ class App:
                                                                 and self.job_thread.is_alive()),
                 "default_folder": paths.default_work_folder(),
                 "data_dir": paths.data_dir(),
+                "key_storage": settings.key_storage(),
                 "can_shortcut": system.can_make_shortcut(),
                 "home": os.path.expanduser("~")}
 
@@ -311,7 +312,29 @@ class Handler(BaseHTTPRequestHandler):
     def _post_provider_forget(self, body):
         settings.set_api_key(body.get("provider", ""), "")
         self.app.bus.publish({"type": "settings_changed"})
-        return self._json({"ok": True})
+        return self._json({"ok": True, "keys": settings.has_keys()})
+
+    def _post_ollama_test(self, body):
+        """Whether an Ollama address answers, before it is saved."""
+        url = settings.clean_url(body.get("host"))
+        if not url:
+            return self._json({"ok": False, "error": "bad_address"})
+        try:
+            data = providers.request_json(f"{url}/api/version", timeout=5, provider="ollama")
+        except providers.ProviderError as error:
+            return self._json({"ok": False, "error": error.code, "detail": error.detail})
+        return self._json({"ok": True, "version": data.get("version", ""), "host": url})
+
+    def _post_search_test(self, body):
+        """Search once through a SearXNG address, before it is saved."""
+        url = settings.clean_url(body.get("url"))
+        if not url:
+            return self._json({"ok": False, "error": "bad_address"})
+        try:
+            results = websearch.searxng("Aetheris", url)
+        except Exception as error:
+            return self._json({"ok": False, "error": "search", "detail": str(error)[:400]})
+        return self._json({"ok": True, "count": len(results), "url": url})
 
     def _post_ollama_start(self, body):
         return self._json({"ok": ollama_setup.start()})
@@ -367,7 +390,12 @@ class Handler(BaseHTTPRequestHandler):
     def _post_conversation_delete(self, body):
         if body.get("id") == self.app.agent.busy:
             return self._json({"ok": False, "error": "busy"})
+        conversation = conversations.load(body.get("id", ""))
         conversations.delete(body.get("id", ""))
+        self.app.agent.forget(body.get("id", ""))
+        if conversation:
+            remove_attachments(attachment_folders(conversation)
+                               - attachment_folders(*_all_conversations()))
         return self._json({"ok": True, "conversations": conversations.list_all()})
 
     def _post_conversation_folder(self, body):
@@ -376,7 +404,7 @@ class Handler(BaseHTTPRequestHandler):
         if not body.get("folder"):
             return self._json({"ok": False})
         os.makedirs(folder, exist_ok=True)
-        settings.update({"work_folder": folder})
+        # Only this conversation moves; the default for new conversations stays as it is.
         if conversation and conversation["id"] != self.app.agent.busy:
             conversation["folder"] = folder
             conversations.save(conversation)
@@ -432,15 +460,69 @@ def serve(app: App, port: int = 0) -> ThreadingHTTPServer:
     return server
 
 
+def _attachments_root() -> str:
+    return os.path.realpath(os.path.join(paths.data_dir(), "attachments"))
+
+
+def _all_conversations() -> list:
+    found = []
+    for item in conversations.list_all():
+        conversation = conversations.load(item.get("id", ""))
+        if conversation:
+            found.append(conversation)
+    return found
+
+
+def attachment_folders(*conversation_list) -> set:
+    """The upload folders (attachments/<day>/<id>) that conversations still show or use."""
+    root = _attachments_root()
+    folders = set()
+    for conversation in conversation_list:
+        files = [a.get("path", "") for item in conversation.get("ui", [])
+                 for a in item.get("attachments") or [] if isinstance(a, dict)]
+        files += [p for m in conversation.get("messages", []) for p in m.get("images") or []]
+        for path in files:
+            folder = os.path.dirname(os.path.realpath(str(path)))
+            if os.path.dirname(os.path.dirname(folder)) == root:
+                folders.add(folder)
+    return folders
+
+
+def remove_attachments(folders) -> None:
+    root = _attachments_root()
+    for folder in folders:
+        if os.path.dirname(os.path.dirname(folder)) != root:
+            continue
+        shutil.rmtree(folder, ignore_errors=True)
+        try:
+            os.rmdir(os.path.dirname(folder))          # the day folder, once it is empty
+        except OSError:
+            pass
+
+
 def clean_attachments(days: int = 30) -> None:
-    root = os.path.join(paths.data_dir(), "attachments")
+    """Remove old uploads that no saved conversation refers to any more.
+
+    Attachments of a kept conversation stay as long as the conversation does, so
+    reopening it never shows broken pictures; they go when it is deleted.
+    """
+    root = _attachments_root()
     if not os.path.isdir(root):
         return
+    keep = attachment_folders(*_all_conversations())
     cutoff = time.time() - days * 86400
-    for name in os.listdir(root):
-        full = os.path.join(root, name)
+    for day in os.listdir(root):
+        day_folder = os.path.join(root, day)
+        if not os.path.isdir(day_folder):
+            continue
+        for name in os.listdir(day_folder):
+            full = os.path.join(day_folder, name)
+            try:
+                if full not in keep and os.path.getmtime(full) < cutoff:
+                    shutil.rmtree(full, ignore_errors=True)
+            except OSError:
+                pass
         try:
-            if os.path.getmtime(full) < cutoff:
-                shutil.rmtree(full, ignore_errors=True)
+            os.rmdir(day_folder)
         except OSError:
             pass
