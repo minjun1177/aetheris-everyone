@@ -10,19 +10,23 @@ show it.
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import hashlib
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from aetheris_everyone import providers, settings
 
 DOWNLOAD_PAGE = "https://ollama.com/download"
-_RELEASES = "https://github.com/ollama/ollama/releases/latest/download/"
+_LATEST_API = "https://api.github.com/repos/ollama/ollama/releases/latest"
+_RELEASE_FILES = "https://github.com/ollama/ollama/releases/download/{tag}/{name}"
 
 # What the setup screen offers. Sizes are read from the registry at runtime.
 MODELS = [
@@ -36,6 +40,12 @@ _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 def host() -> str:
     return providers.OllamaProvider().host
+
+
+def is_local() -> bool:
+    """Whether the engine address is this computer (and so something this app can start)."""
+    name = (urllib.parse.urlparse(host()).hostname or "").lower()
+    return name in ("127.0.0.1", "localhost", "::1", "0.0.0.0") or name.startswith("127.")
 
 
 def running() -> bool:
@@ -148,16 +158,20 @@ def status() -> dict:
         except providers.ProviderError:
             models = []
     ram = ram_gb()
-    return {"installed": is_running or installed(), "running": is_running, "models": models,
-            "ram_gb": round(ram, 1), "recommended": recommended(ram),
-            "choices": MODELS, "platform": sys.platform,
-            "can_install": sys.platform in ("win32", "darwin") or bool(shutil.which("pkexec"))}
+    local = is_local()
+    return {"installed": is_running or (local and installed()), "running": is_running,
+            "models": models, "ram_gb": round(ram, 1), "recommended": recommended(ram),
+            "choices": MODELS, "platform": sys.platform, "local": local, "host": host(),
+            "can_install": local and (sys.platform in ("win32", "darwin")
+                                      or bool(shutil.which("pkexec")))}
 
 
 def start() -> bool:
     """Start the engine if it is installed; wait up to 30 seconds for it."""
     if running():
         return True
+    if not is_local():
+        return False                 # an engine on another computer is not ours to start
     try:
         if sys.platform == "darwin" and _mac_app():
             subprocess.Popen(["open", "-g", _mac_app()])
@@ -184,11 +198,63 @@ def start() -> bool:
     return False
 
 
-def _download(url: str, target: str, emit, stop: threading.Event) -> bool:
+class Unverified(Exception):
+    pass
+
+
+def _get(url: str, timeout: float = 20) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "AetherisEveryone",
+                                                   "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=timeout, context=providers.ssl_context()) as r:
+        return r.read(2_000_000)
+
+
+def _parse_sums(text: str) -> dict:
+    """`sha256sum` output ("<hash>  ./name") as name -> hash."""
+    sums = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+            sums[parts[1].lstrip("*").removeprefix("./")] = parts[0].lower()
+    return sums
+
+
+def release_asset(name: str) -> dict:
+    """{"url", "sha256", "size"} of `name` in Ollama's latest GitHub release.
+
+    The hash comes from GitHub's own record of the release (or the release's
+    sha256sum.txt), and the address is pinned to that release's tag, so what is
+    checked is what is downloaded. Raises `Unverified` when no hash can be had.
+    """
+    try:
+        release = json.loads(_get(_LATEST_API).decode("utf-8"))
+        tag = release["tag_name"]
+    except Exception as error:
+        raise Unverified(f"the release list could not be read ({error})") from None
+    asset = next((a for a in release.get("assets") or [] if a.get("name") == name), None)
+    if asset is None:
+        raise Unverified(f"{name} is not in release {tag}")
+    digest = str(asset.get("digest") or "")
+    sha = digest.split(":", 1)[1].lower() if digest.startswith("sha256:") else ""
+    if not sha:
+        try:
+            sums = _get(_RELEASE_FILES.format(tag=tag, name="sha256sum.txt")).decode("utf-8", "replace")
+            sha = _parse_sums(sums).get(name, "")
+        except Exception:
+            sha = ""
+    if not sha:
+        raise Unverified(f"release {tag} publishes no checksum for {name}")
+    return {"url": _RELEASE_FILES.format(tag=tag, name=name), "sha256": sha,
+            "size": int(asset.get("size") or 0)}
+
+
+def _download(url: str, target: str, emit, stop: threading.Event, expected: dict) -> bool:
+    """Download to `target` and check it against `expected` (size, sha256); False if stopped."""
     request = urllib.request.Request(url, headers={"User-Agent": "AetherisEveryone"})
+    digest = hashlib.sha256()
     with urllib.request.urlopen(request, timeout=60, context=providers.ssl_context()) as response, \
             open(target, "wb") as out:
-        total = int(response.headers.get("Content-Length") or 0)
+        total = int(response.headers.get("Content-Length") or 0) or expected.get("size", 0)
         done, last = 0, 0.0
         while True:
             if stop.is_set():
@@ -197,25 +263,43 @@ def _download(url: str, target: str, emit, stop: threading.Event) -> bool:
             if not chunk:
                 break
             out.write(chunk)
+            digest.update(chunk)
             done += len(chunk)
             if time.time() - last > 0.3:
                 last = time.time()
                 emit({"type": "install", "stage": "download", "completed": done, "total": total})
+    emit({"type": "install", "stage": "verify"})
+    if (expected.get("size") and done != expected["size"]) or digest.hexdigest() != expected["sha256"]:
+        try:
+            os.remove(target)
+        except OSError:
+            pass
+        raise Unverified("the downloaded installer does not match the published checksum")
     return True
 
 
+def _fetch_verified(name: str, emit, stop: threading.Event) -> str:
+    """Path of the verified download of release file `name`, or "" if cancelled."""
+    asset = release_asset(name)
+    target = os.path.join(tempfile.mkdtemp(prefix="aetheris-ollama-"), name)
+    return target if _download(asset["url"], target, emit, stop, asset) else ""
+
+
 def install(emit, stop: threading.Event) -> None:
-    """Fetch and launch Ollama's own installer, then wait for the engine."""
+    """Fetch, verify and launch Ollama's own installer, then wait for the engine."""
     try:
+        if not is_local():
+            emit({"type": "install", "stage": "failed", "detail": "remote"})
+            return
         if sys.platform == "win32":
-            target = os.path.join(tempfile.gettempdir(), "OllamaSetup.exe")
-            if not _download(_RELEASES + "OllamaSetup.exe", target, emit, stop):
+            target = _fetch_verified("OllamaSetup.exe", emit, stop)
+            if not target:
                 return
             emit({"type": "install", "stage": "installer"})
             os.startfile(target)                     # the installer's own window
         elif sys.platform == "darwin":
-            target = os.path.join(tempfile.gettempdir(), "Ollama-darwin.zip")
-            if not _download(_RELEASES + "Ollama-darwin.zip", target, emit, stop):
+            target = _fetch_verified("Ollama-darwin.zip", emit, stop)
+            if not target:
                 return
             emit({"type": "install", "stage": "unpack"})
             destination = "/Applications"
@@ -228,8 +312,8 @@ def install(emit, stop: threading.Event) -> None:
             if not shutil.which("pkexec"):
                 emit({"type": "install", "stage": "manual", "url": DOWNLOAD_PAGE})
                 return
-            target = os.path.join(tempfile.gettempdir(), "ollama-install.sh")
-            if not _download("https://ollama.com/install.sh", target, emit, stop):
+            target = _fetch_verified("install.sh", emit, stop)
+            if not target:
                 return
             emit({"type": "install", "stage": "installer"})
             # pkexec asks for the password in a graphical dialog.
@@ -246,6 +330,10 @@ def install(emit, stop: threading.Event) -> None:
                 return
             time.sleep(2)
         emit({"type": "install", "stage": "failed", "detail": "timeout"})
+    except Unverified as error:
+        # Never run an installer that could not be checked; offer the download page instead.
+        emit({"type": "install", "stage": "manual", "url": DOWNLOAD_PAGE,
+              "detail": f"not verified: {error}"})
     except Exception as error:
         emit({"type": "install", "stage": "failed", "detail": str(error)[:600]})
 
