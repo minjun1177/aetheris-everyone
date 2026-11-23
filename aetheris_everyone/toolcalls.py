@@ -101,9 +101,10 @@ def strip_thinking(text: str) -> str:
 def visible_text(text: str) -> str:
     """What the person should see of a reply: no reasoning, no call markup."""
     text = strip_thinking(text)
-    cut = text.find(TOOL_CALL_TAG)
-    if cut != -1:
-        text = text[:cut]
+    for marker in (TOOL_CALL_TAG, "[Tool Result for"):
+        cut = text.find(marker)
+        if cut != -1:
+            text = text[:cut]
     return text.strip()
 
 

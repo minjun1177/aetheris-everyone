@@ -100,12 +100,13 @@ function renderMarkdown(source) {
           const nested = m[1].length >= 2;
           items.push(`<li${nested ? ' class="nested"' : ""}>${renderInline(m[3])}</li>`);
           i++;
-        } else if (/^\s{2,}\S/.test(lines[i]) && items.length) {
+        } else if (/^\s{2,}\S/.test(lines[i]) && items.length && !/^\s*```/.test(lines[i])) {
           items[items.length - 1] = items[items.length - 1].replace(/<\/li>$/, `<br>${renderInline(lines[i].trim())}</li>`);
           i++;
         } else break;
       }
-      out.push(ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
+      const start = ordered ? parseInt(bullet[2], 10) : 1;
+      out.push(ordered ? `<ol${start > 1 ? ` start="${start}"` : ""}>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
       continue;
     }
     if (!line.trim()) {

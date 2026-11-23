@@ -695,6 +695,35 @@ def _normalise(tool: dict, arguments: dict) -> dict:
     return out
 
 
+def _several(ctx: Context, name: str, arguments: dict) -> list:
+    """Several items packed into one move / copy / delete, as small models often do.
+
+    A list, or one string naming several things that each exist ("a.jpg b.jpg",
+    "a.jpg, b.jpg") when the string as a whole does not.
+    """
+    if name not in ("move", "copy", "delete"):
+        return []
+    value = arguments.get("path" if name == "delete" else "source")
+    if isinstance(value, list):
+        return [str(v) for v in value if str(v).strip()]
+    if not isinstance(value, str) or not value.strip():
+        return []
+    try:
+        if os.path.lexists(ctx.resolve(value)):
+            return []
+    except (ToolError, Denied):
+        return []
+    for separator in ("\n", ",", ";", " "):
+        parts = [p.strip() for p in value.split(separator) if p.strip()]
+        if len(parts) > 1:
+            try:
+                if all(os.path.lexists(ctx.resolve(p)) for p in parts):
+                    return parts
+            except (ToolError, Denied):
+                return []
+    return []
+
+
 def dispatch(ctx: Context, name: str, arguments: dict) -> tuple:
     """Run one call. Returns (status, result text, display name).
 
@@ -713,6 +742,17 @@ def dispatch(ctx: Context, name: str, arguments: dict) -> tuple:
     if missing:
         return "error", (f"Error: {tool['name']} needs {', '.join(missing)}. "
                          f"It takes: {', '.join(tool['properties'])}."), tool["name"]
+    many = _several(ctx, tool["name"], arguments)
+    if many:
+        key = "path" if tool["name"] == "delete" else "source"
+        each = dict(arguments)
+        if tool["name"] != "delete" and isinstance(each.get("destination"), str) \
+                and not each["destination"].endswith(("/", "\\")):
+            each["destination"] += "/"      # several items always go *into* a folder
+        outcomes = [dispatch(ctx, tool["name"], dict(each, **{key: item})) for item in many]
+        status = "ok" if all(o[0] == "ok" for o in outcomes) else \
+            "denied" if any(o[0] == "denied" for o in outcomes) else "error"
+        return status, "\n".join(o[1] for o in outcomes), tool["name"]
     try:
         result = tool["fn"](ctx, **arguments)
     except Denied as reason:

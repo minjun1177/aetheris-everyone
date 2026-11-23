@@ -37,6 +37,16 @@ class FileTools(Sandbox):
         status, result, name = tools.dispatch(self.context(), "cat", {"filepath": "a.txt"})
         self.assertEqual((status, name), ("ok", "read_file"))
 
+    def test_several_items_in_one_move(self):
+        for name in ("a.jpg", "b.png", "c.txt"):
+            self.write(name, "x")
+        ctx = self.context()
+        status, result, _ = tools.dispatch(ctx, "move", {"source": "a.jpg b.png", "destination": "pics"})
+        self.assertEqual(status, "ok", result)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.work, "pics"))), ["a.jpg", "b.png"])
+        status, _, _ = tools.dispatch(ctx, "delete", {"path": ["c.txt"]})
+        self.assertEqual(status, "ok")
+
     def test_korean_legacy_encoding_is_read_and_kept(self):
         path = os.path.join(self.work, "old.txt")
         with open(path, "wb") as f:

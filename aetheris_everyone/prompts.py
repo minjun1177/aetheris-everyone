@@ -1,5 +1,6 @@
 """What the model is told about itself, the person, and how to call a tool."""
 
+import os
 import platform
 import re
 import sys
@@ -14,6 +15,8 @@ every tool you use appears to them as a small card.
 ## Where you work
 - Work folder: {folder}
   Relative paths are inside this folder. Work here unless the person names another place.
+- What is in the work folder right now (top level): {snapshot}
+  Use these exact names. Look inside subfolders with list_folder before using their files.
 - Computer: {os_name}. Shell for run_command: {shell}.
 - Today: {today}.
 
@@ -85,6 +88,20 @@ def language_of(text: str) -> str:
     return ""
 
 
+def folder_snapshot(folder: str, limit: int = 60) -> str:
+    """The work folder's top level, so a model never has to guess a file name."""
+    try:
+        names = sorted(os.listdir(folder), key=str.lower)
+    except OSError:
+        return "(the folder cannot be read)"
+    names = [n for n in names if not n.startswith(".")]
+    if not names:
+        return "(empty)"
+    shown = [n + ("/" if os.path.isdir(os.path.join(folder, n)) else "") for n in names[:limit]]
+    more = f", ... and {len(names) - limit} more" if len(names) > limit else ""
+    return ", ".join(shown) + more
+
+
 def system_prompt(folder: str, native: bool, careful: bool, user_text: str = "") -> str:
     if sys.platform == "win32":
         os_name, shell = f"Windows {platform.release()}", "cmd.exe (use 'powershell -NoProfile -Command \"...\"' for PowerShell)"
@@ -93,6 +110,7 @@ def system_prompt(folder: str, native: bool, careful: bool, user_text: str = "")
     else:
         os_name, shell = f"Linux ({platform.machine()})", "sh"
     text = _BASE.format(folder=folder, os_name=os_name, shell=shell,
+                        snapshot=folder_snapshot(folder),
                         today=time.strftime("%Y-%m-%d (%A)"))
     if careful:
         text += _CAREFUL
