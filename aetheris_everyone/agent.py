@@ -20,6 +20,15 @@ from aetheris_everyone import (conversations, history, prompts, providers, setti
 MAX_STEPS = 40
 MAX_SAME_CALL = 3
 MAX_REFUSALS = 3
+MAX_CUT_OFF = 2
+
+CUT_OFF_NOTE = (
+    "[System] Your last reply was cut off because it reached the output length limit, so "
+    "the tool call in it was NOT carried out and nothing was written. Do not continue from "
+    "where it stopped - the cut-off part is gone. Send the work again in smaller pieces: "
+    "write_file with only the first part (at most about 80 lines), then one write_file with "
+    "append=true for each following part, in order, until it is complete. For .docx or .xlsx, "
+    "which cannot be appended to, make the document shorter or split it into several files.")
 KEEP_RECENT = 8
 
 
@@ -232,6 +241,7 @@ class Agent:
         seen_calls: dict = {}
         refusals = 0
         nudged = False
+        cut_offs = 0
 
         for _step in range(MAX_STEPS):
             if self.cancel.is_set():
@@ -240,7 +250,7 @@ class Agent:
                 fit(conversation["messages"], max(2000, budget))
             reply_id = uuid.uuid4().hex[:10]
             self.emit({"type": "reply_start", "conversation": cid, "id": reply_id})
-            raw, native_calls, thinking = self._stream_reply(
+            raw, native_calls, thinking, truncated = self._stream_reply(
                 cid, reply_id, provider, history_now, native, careful, ctx.allow_commands)
             if self.cancel.is_set():
                 visible = toolcalls.visible_text(raw)
@@ -266,6 +276,19 @@ class Agent:
                                         "thinking": thinking[:20000] if thinking else ""})
             else:
                 self.emit({"type": "reply_empty", "conversation": cid, "id": reply_id})
+
+            if truncated and _cut_call(raw, native, calls, visible):
+                # A call cut off by the output limit. Keeping its half in the history makes
+                # the model "continue" it, writing only the rest of a file over the whole.
+                cut_offs += 1
+                if cut_offs > MAX_CUT_OFF:
+                    self._ui(conversation, {"kind": "notice", "code": "cut_off"})
+                    return
+                conversation["messages"].append(
+                    {"role": "assistant", "content": (visible + "\n\n" if visible else "")
+                     + "(my reply was cut off here)"})
+                conversation["messages"].append({"role": "user", "content": CUT_OFF_NOTE})
+                continue
 
             if not calls:
                 if not visible:
@@ -320,6 +343,7 @@ class Agent:
     def _stream_reply(self, cid, reply_id, provider, messages, native, careful, commands=False):
         stream_filter = toolcalls.StreamFilter()
         raw, thinking, calls = [], [], []
+        truncated = False
         stream = provider.stream(messages, tools=tools.schemas(commands) if native else None,
                                  think=careful)
         self._stream = stream
@@ -342,6 +366,8 @@ class Agent:
                                "kind": "thinking", "text": event["thinking"]})
                 elif "tool_call" in event:
                     calls.append(event["tool_call"])
+                elif event.get("done"):
+                    truncated = bool(event.get("truncated"))
         finally:
             stream.close()
             self._stream = None
@@ -350,8 +376,17 @@ class Agent:
                 thinking.append(piece)
             self.emit({"type": "delta", "conversation": cid, "id": reply_id,
                        "kind": "thinking" if kind == "think" else "text", "text": piece})
-        return "".join(raw), calls, "".join(thinking)
+        return "".join(raw), calls, "".join(thinking), truncated
 
 
 def _has_tool_tag(text: str) -> bool:
     return toolcalls.TOOL_CALL_TAG in text
+
+
+def _cut_call(raw: str, native: bool, calls: list, visible: str) -> bool:
+    """Whether a reply stopped by the output limit stopped inside a tool call."""
+    if raw.count(toolcalls.TOOL_CALL_TAG) > raw.count("</tool_call>"):
+        return True                  # text protocol: a call was opened and never closed
+    # Native: the call either never arrived, or arrived with arguments cut short (Ollama
+    # hands back what it parsed - a write_file with half its content, or with none).
+    return native and (bool(calls) or not visible)

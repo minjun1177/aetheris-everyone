@@ -6,7 +6,7 @@ format:
     {"text": str}        answer text as it arrives
     {"thinking": str}    reasoning, shown folded away, never stored
     {"tool_call": {"name": str, "arguments": dict, "error": str?}}
-    {"done": True}
+    {"done": True, "truncated": bool}   truncated: stopped by the output limit
 
 Plain `urllib` only, so the packaged app carries no vendor SDKs. A failure is a
 `ProviderError` with a short `code` the window turns into a sentence a person
@@ -341,7 +341,7 @@ class OllamaProvider(Provider):
                         yield {"tool_call": {"name": function["name"],
                                              "arguments": arguments if isinstance(arguments, dict) else {}}}
                 if chunk.get("done"):
-                    yield {"done": True}
+                    yield {"done": True, "truncated": chunk.get("done_reason") == "length"}
                     return
 
         return Stream("ollama", f"{self.host}/api/chat", payload, {}, parse)
@@ -377,12 +377,15 @@ class AnthropicProvider(Provider):
 
         def parse(response):
             pending = _Partial()
+            truncated = False
             for data in _sse(response):
                 try:
                     event = json.loads(data)
                 except ValueError:
                     continue
                 kind = event.get("type")
+                if kind == "message_delta":
+                    truncated = (event.get("delta") or {}).get("stop_reason") == "max_tokens"
                 if kind == "content_block_start":
                     block = event.get("content_block") or {}
                     if block.get("type") == "tool_use":
@@ -404,7 +407,7 @@ class AnthropicProvider(Provider):
                     code = "rate_limit" if "overloaded" in detail.lower() else "server"
                     raise ProviderError(code, detail)
             yield from pending.drain()
-            yield {"done": True}
+            yield {"done": True, "truncated": truncated}
 
         return Stream(self.name, f"{self.base}/v1/messages", payload, self._headers(), parse)
 
@@ -446,6 +449,7 @@ class OpenAIProvider(Provider):
 
         def parse(response):
             pending = _Partial()
+            truncated = False
             for data in _sse(response):
                 if data == "[DONE]":
                     break
@@ -456,6 +460,8 @@ class OpenAIProvider(Provider):
                 if event.get("error"):
                     raise ProviderError("server", str(event["error"].get("message", "error")))
                 for choice in event.get("choices") or []:
+                    if choice.get("finish_reason") == "length":
+                        truncated = True
                     delta = choice.get("delta") or {}
                     if delta.get("reasoning_content"):
                         yield {"thinking": delta["reasoning_content"]}
@@ -467,7 +473,7 @@ class OpenAIProvider(Provider):
                         pending.start(key, function.get("name", ""), call.get("id", ""))
                         pending.feed(key, function.get("arguments", ""))
             yield from pending.drain()
-            yield {"done": True}
+            yield {"done": True, "truncated": truncated}
 
         return Stream(self.name, f"{self.base}/chat/completions", payload, self._headers(), parse)
 
@@ -514,6 +520,7 @@ class GeminiProvider(Provider):
             payload["tools"] = [{"functionDeclarations": declarations}]
 
         def parse(response):
+            truncated = False
             for data in _sse(response):
                 try:
                     event = json.loads(data)
@@ -522,6 +529,8 @@ class GeminiProvider(Provider):
                 if event.get("error"):
                     raise ProviderError("server", str(event["error"].get("message", "error")))
                 for candidate in event.get("candidates") or []:
+                    if candidate.get("finishReason") == "MAX_TOKENS":
+                        truncated = True
                     for part in (candidate.get("content") or {}).get("parts") or []:
                         call = part.get("functionCall")
                         if call and call.get("name"):
@@ -530,7 +539,7 @@ class GeminiProvider(Provider):
                                                  "arguments": args if isinstance(args, dict) else {}}}
                         elif part.get("text"):
                             yield {"thinking" if part.get("thought") else "text": part["text"]}
-            yield {"done": True}
+            yield {"done": True, "truncated": truncated}
 
         url = f"{self.base}/v1beta/models/{self.model}:streamGenerateContent?alt=sse"
         return Stream(self.name, url, payload, self._headers(), parse)
