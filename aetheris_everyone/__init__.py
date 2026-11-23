@@ -5,6 +5,6 @@ asks before it changes anything that matters, and every change it makes can be
 taken back with one button.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 APP_NAME = "Aetheris Everyone"
