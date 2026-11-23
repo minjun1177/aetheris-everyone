@@ -6,3 +6,6 @@ ddgs>=9.0,<10.0
 pypdf>=5.0
 # Certificates for HTTPS in the packaged app (macOS has none for Python by default).
 certifi
+# API keys in the system password store (Credential Manager / Keychain / Secret Service).
+# Without it, or where no store works, keys are kept in an owner-only file instead.
+keyring>=25

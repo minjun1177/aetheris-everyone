@@ -29,6 +29,7 @@ dependencies = [
     "ddgs>=9.0,<10.0",
     "pypdf>=5.0",
     "certifi",
+    "keyring>=25",
 ]
 
 [project.urls]

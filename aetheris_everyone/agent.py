@@ -136,6 +136,10 @@ class Agent:
     def pending_approvals(self) -> list:
         return [p["public"] for p in self._approvals.values()]
 
+    def forget(self, conversation_id: str) -> None:
+        """Drop what was allowed "for this conversation" once it is deleted."""
+        self._granted.pop(conversation_id, None)
+
     # -- the turn ----------------------------------------------------------------
     def _ask(self, conversation_id: str, request: dict) -> str:
         approval_id = uuid.uuid4().hex[:10]
@@ -194,7 +198,8 @@ class Agent:
             careful = bool(settings.get("careful"))
             ctx = tools.Context(folder, changes, lambda request: self._ask(cid, request),
                                 settings.get("safety"), self._granted.setdefault(cid, set()),
-                                self.cancel, extra_readable=files + images)
+                                self.cancel, extra_readable=files + images,
+                                allow_commands=bool(settings.get("allow_commands")))
             self._loop(conversation, provider, native, careful, ctx)
         except providers.ProviderError as error:
             self._ui(conversation, {"kind": "error", "code": error.code, "detail": error.detail})
@@ -218,7 +223,7 @@ class Agent:
         cid = conversation["id"]
         latest = next((m["content"] for m in reversed(conversation["messages"])
                        if m["role"] == "user" and not m["content"].startswith("[")), "")
-        system = prompts.system_prompt(ctx.folder, native, careful, latest)
+        system = prompts.system_prompt(ctx.folder, native, careful, latest, ctx.allow_commands)
         if provider.name == "ollama":
             budget = int(int(settings.get("context_tokens") or 16384) * 0.7) - \
                 _estimate_tokens(system)
@@ -236,7 +241,7 @@ class Agent:
             reply_id = uuid.uuid4().hex[:10]
             self.emit({"type": "reply_start", "conversation": cid, "id": reply_id})
             raw, native_calls, thinking = self._stream_reply(
-                cid, reply_id, provider, history_now, native, careful)
+                cid, reply_id, provider, history_now, native, careful, ctx.allow_commands)
             if self.cancel.is_set():
                 visible = toolcalls.visible_text(raw)
                 if visible:
@@ -312,10 +317,10 @@ class Agent:
                 return
         self._ui(conversation, {"kind": "notice", "code": "step_limit"})
 
-    def _stream_reply(self, cid, reply_id, provider, messages, native, careful):
+    def _stream_reply(self, cid, reply_id, provider, messages, native, careful, commands=False):
         stream_filter = toolcalls.StreamFilter()
         raw, thinking, calls = [], [], []
-        stream = provider.stream(messages, tools=tools.schemas() if native else None,
+        stream = provider.stream(messages, tools=tools.schemas(commands) if native else None,
                                  think=careful)
         self._stream = stream
         if self.cancel.is_set():

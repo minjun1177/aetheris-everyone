@@ -7,9 +7,11 @@ they chose), records every change for undo, and turns any failure into a short
 message the model can read and recover from.
 
 Categories decide the asking:
-    read    look at files                       - asked only outside the work folder
-    change  create / edit / move / delete       - undoable; asked per safety level
-    run     start a program                     - asked unless "do everything" is on
+    read    look at files                       - asked outside the work folder (not in "auto")
+    change  create / edit / move / delete       - undoable; asked per safety level, and
+                                                  always asked outside the work folder
+    run     start a program                     - off unless turned on in Settings; then
+                                                  asked at every safety level
     web     search, read a public page          - never asked; nothing local changes
 """
 
@@ -23,7 +25,7 @@ import sys
 import threading
 import time
 
-from aetheris_everyone import documents, history, paths, websearch
+from aetheris_everyone import documents, history, paths, settings, websearch
 
 RESULT_LIMIT = 12_000
 READ_LINES = 400
@@ -42,7 +44,8 @@ class Denied(Exception):
 
 class Context:
     def __init__(self, folder: str, changes: history.ChangeSet, ask, safety: str,
-                 granted: set, cancelled: threading.Event, extra_readable=()):
+                 granted: set, cancelled: threading.Event, extra_readable=(),
+                 allow_commands: bool = False):
         self.folder = os.path.realpath(folder)
         self.changes = changes
         self.ask = ask                    # ask(request: dict) -> "allow" | "always" | "deny"
@@ -50,6 +53,7 @@ class Context:
         self.granted = granted            # categories allowed for the rest of the conversation
         self.cancelled = cancelled
         self.extra_readable = {os.path.realpath(p) for p in extra_readable}
+        self.allow_commands = allow_commands
 
     # -- paths -----------------------------------------------------------
     def resolve(self, path) -> str:
@@ -77,11 +81,14 @@ class Context:
     # -- asking ------------------------------------------------------------
     def permit(self, category: str, request: dict, outside: bool = False) -> None:
         needed = set()
-        if outside and self.safety != "auto" and "outside" not in self.granted:
+        # "Do everything" still asks before changing anything outside the work folder,
+        # and before running a program: neither is limited to what the person chose.
+        if outside and "outside" not in self.granted and \
+                (self.safety != "auto" or category == "change"):
             needed.add("outside")
         if category == "change" and self.safety == "ask" and "change" not in self.granted:
             needed.add("change")
-        if category == "run" and self.safety != "auto" and "run" not in self.granted:
+        if category == "run" and "run" not in self.granted:
             needed.add("run")
         if not needed:
             return
@@ -472,9 +479,50 @@ def _kill_tree(process: subprocess.Popen) -> None:
             pass
 
 
+_PRIVATE_WORDS = ("secrets.json", "aetheris_everyone_home",
+                  # programs that read the system password store
+                  "keyring", "cmdkey", "credentialmanager", "get-storedcredential", "credread",
+                  "vaultcmd", "find-generic-password", "find-internet-password",
+                  "dump-keychain", "secret-tool")
+_DATA_NAMES = ("aetheriseveryone", "aetheris-everyone")       # paths.data_dir() on each system
+_DATA_PARENTS = ("%appdata%", "$appdata", "${appdata}", "$env:appdata", "$xdg_data_home",
+                 "${xdg_data_home}", "roaming", "share", "application support")
+_HOME_PREFIXES = ("~", "$home", "${home}", "%userprofile%", "$env:userprofile", "%homepath%")
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.replace("\\", "/").lower().replace('"', "").replace("'", "").split())
+
+
+def touches_private_data(command: str) -> bool:
+    """Whether a command names the app's own data folder or the key store.
+
+    A guard against the obvious, not a sandbox: a determined program can still
+    find its way there, so the command is also always shown to the person first.
+    """
+    flat = _flat(command)
+    data = os.path.normpath(paths.data_dir())
+    words = {_flat(data), _flat(os.path.realpath(data)), *_PRIVATE_WORDS}
+    names = {_flat(os.path.basename(data)), *_DATA_NAMES}
+    parents = {_flat(os.path.basename(os.path.dirname(data))), *_DATA_PARENTS}
+    # "share/aetheris-everyone", "%appdata%/aetheriseveryone", "roaming/aetheriseveryone" ...
+    words |= {f"{parent}/{name}" for parent in parents for name in names}
+    # "~/.local/share/aetheris-everyone", "$home/library/application support/aetheriseveryone" ...
+    words |= {f"{home}/{rest}/{name}" for home in _HOME_PREFIXES for name in names
+              for rest in (".local/share", "library/application support", "appdata/roaming")}
+    return any(word in flat for word in words)
+
+
 def run_command(ctx: Context, command: str, reason: str = "", timeout_seconds: int = 120) -> str:
     if not command or not command.strip():
         raise ToolError("command is required")
+    if not ctx.allow_commands:
+        raise ToolError("running programs is turned off in this app's Settings. Do the job with "
+                        "the file tools, or tell the user it needs a program to be run and that "
+                        "they can allow it in Settings.")
+    if touches_private_data(command):
+        raise Denied("that command reaches the assistant's own private data (settings, keys, "
+                     "history)")
     try:
         timeout = max(5, min(900, int(timeout_seconds or 120)))
     except (TypeError, ValueError):
@@ -488,7 +536,7 @@ def run_command(ctx: Context, command: str, reason: str = "", timeout_seconds: i
     else:
         kwargs["start_new_session"] = True
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
-    for secret in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+    for secret in settings.ENV_KEY_NAMES + ("AETHERIS_EVERYONE_HOME",):
         env.pop(secret, None)
     process = subprocess.Popen(command, env=env, **kwargs)
     chunks = []
@@ -520,6 +568,8 @@ def run_command(ctx: Context, command: str, reason: str = "", timeout_seconds: i
                             f"here.\nOutput so far:\n{output[-4000:]}")
         time.sleep(0.1)
     reader.join(5)
+    if not reader.is_alive():
+        process.stdout.close()
     output = _decode_output(b"".join(chunks)).strip()
     if len(output) > RESULT_LIMIT:
         output = output[:3000] + "\n... (middle cut) ...\n" + output[-(RESULT_LIMIT - 3000):]
@@ -669,15 +719,20 @@ def lookup(name: str):
     return _BY_NAME.get(ALIASES.get(name, name))
 
 
-def schemas() -> list:
+def offered(commands: bool) -> list:
+    """The tools the model is told about: run_command only when running programs is on."""
+    return [t for t in TOOLS if commands or t["category"] != "run"]
+
+
+def schemas(commands: bool = True) -> list:
     return [{"name": t["name"], "description": t["description"],
              "parameters": {"type": "object", "properties": t["properties"],
-                            "required": t["required"]}} for t in TOOLS]
+                            "required": t["required"]}} for t in offered(commands)]
 
 
-def text_protocol_catalog() -> str:
+def text_protocol_catalog(commands: bool = True) -> str:
     lines = []
-    for t in TOOLS:
+    for t in offered(commands):
         params = ", ".join(f"{k}{'' if k in t['required'] else '?'}" for k in t["properties"])
         lines.append(f"- {t['name']}({params}): {t['description']}")
     return "\n".join(lines)

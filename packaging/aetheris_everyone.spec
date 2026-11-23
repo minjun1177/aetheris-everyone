@@ -3,19 +3,25 @@
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 NAME = "AetherisEveryone"
 
 datas = [(os.path.join(ROOT, "aetheris_everyone", "web"), os.path.join("aetheris_everyone", "web")),
          (os.path.join(SPECPATH, "icon.png"), "aetheris_everyone")]
-hidden = collect_submodules("aetheris_everyone") + collect_submodules("ddgs")
+hidden = collect_submodules("aetheris_everyone") + collect_submodules("ddgs") + \
+    collect_submodules("keyring")
 for package in ("webview", "certifi", "ddgs"):
     try:
         datas += collect_data_files(package)
     except Exception:
         pass
+# keyring finds its backends through package metadata (entry points).
+try:
+    datas += copy_metadata("keyring")
+except Exception:
+    pass
 
 a = Analysis(
     [os.path.join(SPECPATH, "launch.py")],

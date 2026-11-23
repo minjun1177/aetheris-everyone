@@ -90,12 +90,87 @@ class FileTools(Sandbox):
         self.assertEqual(len(self.asked), 1)
 
     def test_command_is_asked_and_runs_in_folder(self):
-        ctx = self.context(answer="allow")
+        ctx = self.context(answer="allow", commands=True)
         status, result, _ = tools.dispatch(ctx, "run_command", {"command": "echo hello",
                                                                 "reason": "test"})
         self.assertEqual(status, "ok", result)
         self.assertIn("hello", result)
         self.assertEqual(self.asked[0]["category"], "run")
+
+    def test_commands_are_off_unless_turned_on(self):
+        status, result, _ = tools.dispatch(self.context(safety="auto"), "run_command",
+                                           {"command": "echo hello"})
+        self.assertEqual(status, "error")
+        self.assertIn("turned off", result)
+        self.assertEqual(self.asked, [])
+        self.assertNotIn("run_command", [t["name"] for t in tools.schemas(commands=False)])
+        self.assertNotIn("run_command", tools.text_protocol_catalog(commands=False))
+
+    def test_auto_mode_asks_before_every_command(self):
+        ctx = self.context(safety="auto", commands=True)
+        status, _, _ = tools.dispatch(ctx, "run_command", {"command": "echo a"})
+        self.assertEqual(status, "ok")
+        self.assertEqual(len(self.asked), 1)
+        self.assertEqual(self.asked[0]["category"], "run")
+
+    def test_shell_cannot_reach_private_data(self):
+        secrets = os.path.join(paths.data_dir(), "secrets.json")
+        paths.write_json(secrets, {"openai": "sk-REAL-SECRET"})
+        reader = "type" if os.name == "nt" else "cat"
+        attempts = [f'{reader} "{secrets}"',
+                    f"{reader} {paths.data_dir()}{os.sep}settings.json",
+                    f"cd {os.path.dirname(paths.data_dir())} && {reader} {os.path.basename(paths.data_dir())}/secrets.json",
+                    "type %APPDATA%\\AetherisEveryone\\secrets.json",
+                    "cat ~/.local/share/aetheris-everyone/secrets.json",
+                    "cat \"$HOME/Library/Application Support/AetherisEveryone/secrets.json\"",
+                    "python -m keyring get \"Aetheris Everyone\" openai",
+                    "security find-generic-password -s \"Aetheris Everyone\" -w",
+                    "cmdkey /list"]
+        for command in attempts:
+            ctx = self.context(safety="auto", commands=True)
+            status, result, _ = tools.dispatch(ctx, "run_command", {"command": command})
+            self.assertEqual(status, "denied", command)
+            self.assertNotIn("sk-REAL-SECRET", result)
+            self.assertEqual(self.asked, [], command)     # refused before anyone is asked
+
+    def test_default_data_folders_are_recognised_without_a_file_name(self):
+        for command in ("dir %APPDATA%\\AetherisEveryone", "Get-ChildItem $env:APPDATA/AetherisEveryone",
+                        "ls ~/.local/share/aetheris-everyone/", "ls $XDG_DATA_HOME/aetheris-everyone",
+                        'ls "$HOME/Library/Application Support/AetherisEveryone"',
+                        "type C:\\Users\\kim\\AppData\\Roaming\\AetherisEveryone\\settings.json"):
+            self.assertTrue(tools.touches_private_data(command), command)
+
+    def test_ordinary_commands_are_not_mistaken_for_private_ones(self):
+        for command in ("echo hello", "python convert.py report.csv", "dir", "ls -la docs",
+                        "cd ~/aetheris-everyone && git status", "pip list"):
+            self.assertFalse(tools.touches_private_data(command), command)
+
+    def test_command_environment_has_no_keys(self):
+        os.environ["OPENAI_API_KEY"] = "sk-from-env"
+        try:
+            ctx = self.context(commands=True)
+            command = "echo %OPENAI_API_KEY%" if os.name == "nt" else "echo \"[$OPENAI_API_KEY]\""
+            status, result, _ = tools.dispatch(ctx, "run_command", {"command": command})
+        finally:
+            os.environ.pop("OPENAI_API_KEY", None)
+        self.assertEqual(status, "ok", result)
+        self.assertNotIn("sk-from-env", result)
+
+    def test_auto_mode_asks_before_changing_outside(self):
+        outside = os.path.join(self.root, "elsewhere")
+        os.makedirs(outside)
+        target = os.path.join(outside, "x.txt")
+        with open(target, "w") as f:
+            f.write("keep")
+        ctx = self.context(safety="auto", answer="deny")
+        status, _, _ = tools.dispatch(ctx, "delete", {"path": target})
+        self.assertEqual(status, "denied")
+        self.assertTrue(os.path.exists(target))
+        self.assertTrue(self.asked[0]["outside"])
+        ctx = self.context(safety="auto", answer="deny")
+        status, _, _ = tools.dispatch(ctx, "read_file", {"path": target})
+        self.assertEqual(status, "ok")                   # reading outside stays unasked in auto
+        self.assertEqual(self.asked, [])
 
     def test_find_and_search(self):
         self.write("docs/plan.md", "budget 2026\n")
