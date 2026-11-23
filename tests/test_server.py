@@ -130,3 +130,7 @@ class ServerBehaviour(ServerCase):
         status, body = self.post("provider/forget", {"provider": "anthropic"})
         self.assertFalse(body["keys"]["anthropic"])
 
+    def test_katex_assets_are_served(self):
+        with urllib.request.urlopen(self.base + "/vendor/katex/fonts/KaTeX_Main-Regular.woff2") as response:
+            self.assertEqual(response.headers["Content-Type"], "font/woff2")
+            self.assertGreater(len(response.read()), 1000)

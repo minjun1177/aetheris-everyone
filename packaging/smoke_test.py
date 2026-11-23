@@ -37,7 +37,9 @@ def main(executable: str) -> int:
         with urllib.request.urlopen(f"{base}/", timeout=10) as response:
             page = response.read().decode("utf-8")
             assert "Aetheris Everyone" in page, "index.html missing"
-        for asset in ("app.js", "style.css", "i18n.js", "markdown.js", "icon.svg"):
+        for asset in ("app.js", "style.css", "i18n.js", "markdown.js", "icon.svg",
+                      "vendor/katex/katex.min.js", "vendor/katex/katex.min.css",
+                      "vendor/katex/fonts/KaTeX_Main-Regular.woff2"):
             with urllib.request.urlopen(f"{base}/{asset}", timeout=10) as response:
                 assert response.status == 200 and response.read(), asset
         request = urllib.request.Request(f"{base}/api/state", headers={"X-Token": info["token"]})

@@ -27,12 +27,48 @@ function renderInline(text) {
   return text.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[Number(i)]}</code>`);
 }
 
+// Math: $$...$$ and \[...\] as a block, $...$ and \(...\) inline. Code spans and
+// fences are matched first and left alone. A "$" only opens math when text follows
+// it directly and closes it when the next character is not a digit, so "$5 and $10"
+// stays text. Placeholders (\u0001n\u0001) survive escaping and are filled in last.
+const MATH = /(```[\s\S]*?(?:```|$)|`[^`\n]+`)|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$(?=[^\s$])((?:\\.|[^$\\\n])*?[^\s\\$])\$(?!\d)/g;
+
+function takeMath(source) {
+  const found = [];
+  const text = source.replace(MATH, (all, code, block, bracket, paren, inline) => {
+    if (code !== undefined) return all;
+    const display = block !== undefined || bracket !== undefined;
+    const tex = [block, bracket, paren, inline].find((part) => part !== undefined);
+    found.push({ tex: tex.trim(), display, raw: all });
+    return `\u0001${found.length - 1}\u0001`;
+  });
+  return { text, found };
+}
+
+function renderMath(item) {
+  if (typeof katex === "undefined") return escapeHtml(item.raw);
+  try {
+    return katex.renderToString(item.tex, { displayMode: item.display, throwOnError: false, output: "htmlAndMathml", trust: false, maxExpand: 500 });
+  } catch (_) {
+    return escapeHtml(item.raw);
+  }
+}
+
+function putMath(html, found) {
+  return html.replace(/\u0001(\d+)\u0001/g, (_, i) => (found[Number(i)] ? renderMath(found[Number(i)]) : ""));
+}
+
 function splitRow(line) {
   return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 }
 
 function renderMarkdown(source) {
-  const lines = escapeHtml(source || "").replace(/\r\n/g, "\n").split("\n");
+  const math = takeMath(String(source || "").replace(/\r\n/g, "\n"));
+  return putMath(renderBlocks(math.text), math.found);
+}
+
+function renderBlocks(source) {
+  const lines = escapeHtml(source).split("\n");
   const out = [];
   let i = 0;
   let paragraph = [];

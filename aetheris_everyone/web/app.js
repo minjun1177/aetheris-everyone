@@ -265,20 +265,25 @@ function renderEngine() {
   const button = $("engineStatus");
   let led = "on";
   let name = S.state ? S.state.model : "";
-  let sub = S.state ? (s.provider === "ollama" ? t("status.local") : S.state.provider_label) : "";
+  const remote = s.provider === "ollama" && S.ollama && S.ollama.local === false;
+  let sub = S.state ? (s.provider === "ollama" ? (remote ? hostName(S.ollama.host) : t("status.local")) : S.state.provider_label) : "";
   if (!s.setup_done || !name) {
     led = "off"; name = t("status.none"); sub = "";
   } else if (s.provider === "ollama" && S.ollama && !S.ollama.running) {
     led = S.engineStarting ? "wait" : "off";
-    sub = S.engineStarting ? t("status.starting") : t("status.off");
+    sub = remote ? t("status.remote_off", { host: hostName(S.ollama.host) }) : S.engineStarting ? t("status.starting") : t("status.off");
   }
   button.innerHTML = `<span class="led ${led}"></span><span class="txt"><b>${escapeHtml(name)}</b><small>${escapeHtml(sub)}</small></span>`;
+}
+
+function hostName(url) {
+  try { return new URL(url).host; } catch (_) { return String(url || ""); }
 }
 
 async function engineClicked() {
   const s = settingsNow();
   if (!s.setup_done) return openSetup(0);
-  if (s.provider === "ollama" && S.ollama && !S.ollama.running) return startEngine();
+  if (s.provider === "ollama" && S.ollama && !S.ollama.running && S.ollama.local !== false) return startEngine();
   openSettings("ai");
 }
 
@@ -603,13 +608,17 @@ async function undoChanges(item, force) {
   if (S.convId === conversation) await openConversation(conversation);
 }
 
+function errText(code) {
+  return STRINGS.en["err." + code] ? t("err." + code) : t("err.other");
+}
+
 function errorCard(item) {
   const code = item.code || "other";
   const acts = [];
   if (code === "ollama_down") acts.push(h("button", { class: "btn small primary", html: icon("power") + escapeHtml(t("err.ollama_down.act")), onclick: startEngine }));
   if (code === "model_missing" || code === "no_model") acts.push(h("button", { class: "btn small primary", html: icon("download") + escapeHtml(t("err.model_missing.act")), onclick: () => openSetup(settingsNow().provider === "ollama" ? 3 : 2) }));
   if (code === "bad_key" || code === "no_key") acts.push(h("button", { class: "btn small primary", html: icon("key") + escapeHtml(t("err.key.act")), onclick: () => openSetup(2) }));
-  const message = STRINGS.en["err." + code] ? t("err." + code) : t("err.other");
+  const message = errText(code);
   return h("div", { class: "error-card" }, h("span", { html: icon("alert") }),
     h("div", {}, h("div", { text: message }),
       item.detail && code !== "ollama_down" ? h("div", { class: "detail", text: item.detail }) : null,
@@ -855,7 +864,7 @@ async function send() {
   const result = await api("send", { conversation: S.convId, text, attachments });
   if (!result.ok) {
     S.adopt = false;
-    return toast(result.error === "busy" ? t("err.busy") : t("err.other"));
+    return toast(errText(result.error));
   }
   if (!S.convId || S.convId !== result.conversation) {
     S.convId = result.conversation;
@@ -895,9 +904,9 @@ async function addFiles(fileList) {
       if (!result.ok) throw new Error(result.error);
       entry.path = result.path;
       entry.uploading = false;
-    } catch (_) {
+    } catch (error) {
       S.attachments.splice(S.attachments.indexOf(entry), 1);
-      toast(t("err.other"));
+      toast(errText(error && error.message));
     }
     renderAttachments();
   }
@@ -959,6 +968,39 @@ function confirmModal(title, body, okLabel, onOk) {
       h("button", { class: "btn", text: t("confirm.cancel"), onclick: () => m.close() }),
       h("button", { class: "btn danger", text: okLabel, onclick: () => { m.close(); onOk(); } }))),
   ]);
+}
+
+/* ------------------------------------------------- shared settings fields */
+
+// An address with a "check" button; saved only once the check succeeds.
+function checkedField({ label, desc, value, placeholder, check, save, okText }) {
+  const input = h("input", { class: "input", value: value || "", placeholder, autocomplete: "off", spellcheck: "false" });
+  const status = h("div", { style: "margin-top:6px;font-size:13px" });
+  const run = async () => {
+    status.replaceChildren(h("span", { class: "muted", text: t("setup.cloud.checking") }));
+    const result = await check(input.value.trim());
+    if (!result.ok) {
+      status.replaceChildren(h("div", { class: "err-text", text: errText(result.error) }),
+        result.detail ? h("small", { class: "muted", text: result.detail }) : null);
+      return;
+    }
+    await save(result);
+    status.replaceChildren(h("span", { class: "ok-text", html: icon("check") + escapeHtml(okText(result)) }));
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
+  return h("div", { class: "field" }, label ? h("label", { text: label }) : null,
+    h("div", { class: "row" }, input, h("button", { class: "btn", text: t("settings.check"), onclick: run })),
+    desc ? h("small", { text: desc }) : null, status);
+}
+
+function ollamaHostField(onSaved) {
+  return checkedField({
+    label: t("settings.ollama_host"), desc: t("settings.ollama_host.desc"),
+    value: settingsNow().ollama_host, placeholder: "http://127.0.0.1:11434",
+    check: (host) => api("ollama/test", { host }),
+    save: async (result) => { await api("settings", { ollama_host: result.host }); await refreshState(); if (onSaved) onSaved(); },
+    okText: (result) => t("settings.check.ok", { version: result.version || "?" }),
+  });
 }
 
 /* ----------------------------------------------------------------- setup */
@@ -1073,7 +1115,8 @@ function openSetup(startStep = 0) {
     const job = W.job;
     // engine row
     let engineText, engineCls = "todo", engineActs = [];
-    if (st.running) { engineText = t("setup.local.engine.ok"); engineCls = "ok"; }
+    if (st.running) { engineText = st.local === false ? t("setup.local.remote", { host: st.host }) : t("setup.local.engine.ok"); engineCls = "ok"; }
+    else if (st.local === false) engineText = t("setup.local.remote.off", { host: st.host });
     else if (st.installed) {
       engineText = t("setup.local.engine.off");
       engineActs.push(h("button", { class: "btn small primary", html: icon("power") + escapeHtml(t("setup.local.start")), onclick: async (e) => { e.target.disabled = true; await api("ollama/start", {}); refreshLocal(); } }));
@@ -1084,11 +1127,17 @@ function openSetup(startStep = 0) {
     }
     nodes.push(h("div", { class: "status-row " + engineCls }, h("span", { class: "sicon", html: icon(engineCls === "ok" ? "check" : "chip") }),
       h("div", { class: "stext" }, h("b", { text: t("setup.local.engine") }), h("small", { text: engineText })), ...engineActs));
+    if (W.hostOpen === undefined) W.hostOpen = st.local === false && !st.running;
+    const hostBox = h("details", { style: "margin:8px 0 4px", open: W.hostOpen },
+      h("summary", { class: "muted", text: t("setup.local.host") }),
+      ollamaHostField(() => { W.sizes = {}; refreshLocal(); }));
+    hostBox.addEventListener("toggle", () => { W.hostOpen = hostBox.open; });
+    nodes.push(hostBox);
     if (job && job.type === "install" && !st.running) {
-      const text = { download: t("setup.local.downloading"), installer: t("setup.local.installer"), unpack: t("setup.local.waiting"), waiting: t("setup.local.waiting"), manual: t("setup.local.manual"), failed: t("setup.local.failed") }[job.stage] || "";
+      const text = { download: t("setup.local.downloading"), verify: t("setup.local.verifying"), installer: t("setup.local.installer"), unpack: t("setup.local.waiting"), waiting: t("setup.local.waiting"), manual: t("setup.local.manual"), failed: t("setup.local.failed") }[job.stage] || "";
       const pct = job.total ? Math.round((job.completed / job.total) * 100) : 0;
       nodes.push(h("div", { class: "howto" }, h("div", { text: text + (job.stage === "download" && job.total ? ` ${pct}%` : "") }),
-        ["download", "waiting", "installer", "unpack"].includes(job.stage) ? h("div", { class: "progress" + (job.total ? "" : " indeterminate") }, h("div", { style: `width:${pct}%` })) : null,
+        ["download", "verify", "waiting", "installer", "unpack"].includes(job.stage) ? h("div", { class: "progress" + (job.total && job.stage === "download" ? "" : " indeterminate") }, h("div", { style: `width:${pct}%` })) : null,
         job.detail ? h("small", { class: "muted", text: job.detail }) : null));
     }
     // model section
@@ -1172,7 +1221,7 @@ function openSetup(startStep = 0) {
       } else {
         W.cloudOk = false;
         const code = result.error || "other";
-        status.replaceChildren(h("div", { class: "err-text", text: STRINGS.en["err." + code] ? t("err." + code) : t("err.other") }),
+        status.replaceChildren(h("div", { class: "err-text", text: errText(code) }),
           result.detail ? h("small", { class: "muted", text: result.detail }) : null);
       }
       nextBtn.disabled = !W.cloudOk;
@@ -1233,6 +1282,7 @@ function openSetup(startStep = 0) {
 function openSettings(tab = "general") {
   const m = modal(null, { big: true });
   let current = tab;
+  let choosingSearxng = false;
 
   const draw = () => {
     const tabs = h("div", { class: "tabs" }, ...["general", "ai", "about"].map((id) =>
@@ -1261,7 +1311,47 @@ function openSettings(tab = "general") {
           class: (s.safety || "balanced") === level ? "sel" : "",
           onclick: async () => { await api("settings", { safety: level }); await refreshState(); draw(); },
         }, h("div", { class: "opt-title", text: t("safety." + level) }), h("div", { class: "opt-desc", text: t(`safety.${level}.desc`) }))))),
+      commandsField(s),
+      ...searchFields(s),
     ];
+  }
+
+  function commandsField(s) {
+    const box = h("input", { type: "checkbox" });
+    box.checked = !!s.allow_commands;
+    box.addEventListener("change", async () => { await api("settings", { allow_commands: box.checked }); await refreshState(); toast(t("settings.saved")); });
+    return h("div", { class: "field" },
+      h("label", { class: "switch" }, box, h("span", { class: "track" }, h("span", { class: "thumb" })), h("span", { text: t("settings.commands") })),
+      h("small", { text: t("settings.commands.desc") }));
+  }
+
+  function searchFields(s) {
+    const engine = choosingSearxng ? "searxng" : (s.search_engine || "auto");
+    const nodes = [h("div", { class: "field" }, h("label", { text: t("settings.search") }),
+      select([["auto", t("settings.search.auto")], ["searxng", t("settings.search.searxng")]], engine, async (v) => {
+        // SearXNG is switched on only once its address has been checked.
+        choosingSearxng = v === "searxng" && !s.searxng_url;
+        if (!choosingSearxng) {
+          await api("settings", { search_engine: v });
+          await refreshState();
+          toast(t("settings.saved"));
+        }
+        draw();
+      }))];
+    if (engine === "searxng") {
+      nodes.push(checkedField({
+        label: t("settings.searxng_url"), desc: t("settings.searxng_url.desc"),
+        value: s.searxng_url, placeholder: "http://192.168.0.10:8080",
+        check: (url) => api("search/test", { url }),
+        save: async (result) => {
+          choosingSearxng = false;
+          await api("settings", { searxng_url: result.url, search_engine: "searxng" });
+          await refreshState();
+        },
+        okText: (result) => t("settings.search.ok", { count: result.count }),
+      }));
+    }
+    return nodes;
   }
 
   function ai() {
@@ -1294,6 +1384,16 @@ function openSettings(tab = "general") {
         select([["8192", "8K"], ["16384", "16K"], ["32768", "32K"], ["65536", "64K"]], String(s.context_tokens || 16384),
           async (v) => { await api("settings", { context_tokens: Number(v) }); await refreshState(); toast(t("settings.saved")); }),
         h("small", { text: t("settings.memory.desc") })));
+      nodes.push(ollamaHostField(() => { pollOllama(); draw(); }));
+    } else if (S.state.keys && S.state.keys[s.provider]) {
+      nodes.push(h("div", { class: "row", style: "margin-top:12px" },
+        h("button", { class: "btn small", html: icon("key") + escapeHtml(t("settings.key.forget")), onclick: () =>
+          confirmModal(t("settings.key.forget"), [S.state.provider_label], t("settings.key.forget"), async () => {
+            await api("provider/forget", { provider: s.provider });
+            await refreshState();
+            toast(t("settings.key.forgot"));
+            draw();
+          }) })));
     }
     return nodes;
   }
@@ -1305,6 +1405,7 @@ function openSettings(tab = "general") {
         h("span", { text: t("settings.version") }), h("span", { class: "v", text: S.state.version }), h("span"),
         h("span", { text: t("settings.data") }), h("span", { class: "v", text: S.state.data_dir || "" }),
         h("button", { class: "btn small", text: t("settings.open"), onclick: () => api("reveal", { path: S.state.data_dir }) }),
+        h("span", { text: t("settings.keys") }), h("span", { class: "v", text: t("settings.keys." + (S.state.key_storage || "file")) }), h("span"),
         h("span", { text: "GitHub" }), h("span", { class: "v", text: "minjun1177/aetheris-everyone" }),
         h("button", { class: "btn small", html: icon("external"), onclick: () => openUrl("https://github.com/minjun1177/aetheris-everyone") })),
       S.state.can_shortcut ? h("div", { class: "row", style: "margin-top:16px" },

@@ -494,3 +494,7 @@ details.thoughts div { white-space: pre-wrap; border-left: 2px solid var(--line)
   .choice-grid, .examples { grid-template-columns: 1fr; }
   .tool, .changes, .approval, .notice, .error-card { margin-left: 0; }
 }
+
+/* Math (KaTeX): wide formulas scroll instead of overflowing the bubble. */
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.katex { font-size: 1.1em; }

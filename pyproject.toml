@@ -43,7 +43,7 @@ aetheris-everyone = "aetheris_everyone.launcher:main"
 packages = ["aetheris_everyone"]
 
 [tool.setuptools.package-data]
-aetheris_everyone = ["web/*"]
+aetheris_everyone = ["web/*", "web/vendor/katex/*", "web/vendor/katex/fonts/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "aetheris_everyone.__version__" }
