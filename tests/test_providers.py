@@ -138,10 +138,14 @@ class Hosts(Sandbox):
         ollama_setup.subprocess.Popen = lambda *a, **k: launched.append(a)
         try:
             self.assertFalse(ollama_setup.start())       # another computer's engine is not ours
-            self.assertFalse(ollama_setup.status()["can_install"])
         finally:
             ollama_setup.running, ollama_setup.subprocess.Popen = real_running, real_popen
         self.assertEqual(launched, [])
+        ollama_setup.running = lambda: False
+        try:
+            self.assertFalse(ollama_setup.status()["can_install"])
+        finally:
+            ollama_setup.running = real_running
         settings.update({"ollama_host": "ftp://nope"})
         self.assertEqual(settings.get("ollama_host"), "http://192.168.0.2:11434")
         settings.update({"ollama_host": ""})

@@ -134,3 +134,13 @@ class ServerBehaviour(ServerCase):
         with urllib.request.urlopen(self.base + "/vendor/katex/fonts/KaTeX_Main-Regular.woff2") as response:
             self.assertEqual(response.headers["Content-Type"], "font/woff2")
             self.assertGreater(len(response.read()), 1000)
+
+    def test_static_types_do_not_depend_on_the_system(self):
+        # Windows takes these from the registry; a script typed text/plain is blocked (nosniff).
+        expected = {"/app.js": "application/javascript; charset=utf-8",
+                    "/style.css": "text/css; charset=utf-8",
+                    "/vendor/katex/katex.min.js": "application/javascript; charset=utf-8",
+                    "/icon.svg": "image/svg+xml; charset=utf-8"}
+        for path, kind in expected.items():
+            with urllib.request.urlopen(self.base + path) as response:
+                self.assertEqual(response.headers["Content-Type"], kind, path)

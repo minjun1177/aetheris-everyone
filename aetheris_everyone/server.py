@@ -25,6 +25,12 @@ from aetheris_everyone import (__version__, agent, conversations, history, ollam
 
 MAX_UPLOAD = 200 * 1024 * 1024
 
+# The window's own files, typed here rather than by `mimetypes`: on Windows that reads the
+# registry, which may lack .woff2 or call .js "text/plain" (blocked under nosniff).
+STATIC_TYPES = {".html": "text/html", ".js": "application/javascript", ".css": "text/css",
+                ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
+                ".woff2": "font/woff2", ".json": "application/json"}
+
 
 class Bus:
     """Fan-out of events to every open window."""
@@ -152,7 +158,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, b"not found", "text/plain")
         with open(target, "rb") as f:
             body = f.read()
-        kind = mimetypes.guess_type(target)[0] or "application/octet-stream"
+        kind = STATIC_TYPES.get(os.path.splitext(target)[1].lower()) or \
+            mimetypes.guess_type(target)[0] or "application/octet-stream"
         if kind.startswith("text/") or kind in ("application/javascript", "image/svg+xml"):
             kind += "; charset=utf-8"
         extra = {}
