@@ -172,6 +172,17 @@ class FileTools(Sandbox):
         self.assertEqual(status, "ok")                   # reading outside stays unasked in auto
         self.assertEqual(self.asked, [])
 
+    def test_append_to_a_document_is_refused(self):
+        ctx = self.context()
+        tools.dispatch(ctx, "write_file", {"path": "d.docx", "content": "# Title\nfirst"})
+        status, result, _ = tools.dispatch(ctx, "write_file", {"path": "d.docx", "content": "appended",
+                                                               "append": True})
+        self.assertEqual(status, "error")
+        self.assertIn("append", result)
+        text = documents.extract(os.path.join(self.work, "d.docx"))
+        self.assertIn("first", text)
+        self.assertNotIn("appended", text)
+
     def test_find_and_search(self):
         self.write("docs/plan.md", "budget 2026\n")
         self.write("docs/other.txt", "nothing\n")
@@ -201,6 +212,30 @@ class Undo(Sandbox):
         self.assertEqual(self.read("gone.txt"), "bye")
         self.assertFalse(os.path.exists(os.path.join(self.work, "new")))
         self.assertFalse(os.path.exists(os.path.join(self.work, "archive")))
+
+    def test_copied_folder_with_later_files_is_not_wiped(self):
+        self.write("src/a.txt", "a")
+        self.write("src/sub/b.txt", "b")
+        ctx = self.context()
+        status, result, _ = tools.dispatch(ctx, "copy", {"source": "src", "destination": "copy"})
+        self.assertEqual(status, "ok", result)
+        self.changes.save()
+        self.write("copy/mine.txt", "the person's own file")
+        result = history.undo("test-conversation", self.changes.id)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["conflicts"], [os.path.join(os.path.realpath(self.work), "copy")])
+        self.assertTrue(history.undo("test-conversation", self.changes.id, force=True)["ok"])
+        self.assertEqual(self.read("copy/mine.txt"), "the person's own file")
+        self.assertFalse(os.path.exists(os.path.join(self.work, "copy", "a.txt")))
+        self.assertFalse(os.path.exists(os.path.join(self.work, "copy", "sub")))
+
+    def test_untouched_copied_folder_is_removed(self):
+        self.write("src/a.txt", "a")
+        ctx = self.context()
+        tools.dispatch(ctx, "copy", {"source": "src", "destination": "copy"})
+        self.changes.save()
+        self.assertTrue(history.undo("test-conversation", self.changes.id)["ok"])
+        self.assertFalse(os.path.exists(os.path.join(self.work, "copy")))
 
     def test_later_edits_are_not_overwritten_silently(self):
         self.write("a.txt", "v1")

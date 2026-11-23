@@ -321,7 +321,11 @@ def write_file(ctx: Context, path: str, content: str = "", append: bool = False)
     existed = os.path.exists(target)
     append = str(append).lower() in ("true", "1", "yes")
     lower = target.lower()
-    if append and existed and not lower.endswith(documents.WRITABLE + documents.READABLE):
+    if append and existed and lower.endswith(documents.WRITABLE + documents.READABLE):
+        raise ToolError(f"append does not work for {os.path.splitext(target)[1]} documents. "
+                        "Read the document, then write_file the whole new version "
+                        "(old content plus the addition) without append.")
+    if append and existed:
         current, encoding = read_text(target)
         joiner = "" if not current or current.endswith("\n") else "\n"
         content, keep_encoding = current + joiner + content, encoding
@@ -645,7 +649,8 @@ TOOLS = [
                     "content": _p("string", "The complete content of the file (or, with "
                                             "append, the text to add)."),
                     "append": _p("boolean", "true = add content at the end of an existing "
-                                            "text file instead of replacing it.")},
+                                            "plain text file (.txt, .md, .csv ...) instead of "
+                                            "replacing it. Not for .docx / .xlsx.")},
      "required": ["path", "content"]},
     {"name": "edit_file", "category": "change", "fn": edit_file,
      "description": "Change part of a text file: replace old_text (copied exactly from the file) "

@@ -32,6 +32,36 @@ def _hash(path: str) -> str:
     return digest.hexdigest()
 
 
+def _snapshot(folder: str) -> dict:
+    """Every file under `folder` as relative path -> [size, mtime_ns]; folders map to None."""
+    found = {}
+    for current, dirs, files in os.walk(folder):
+        for name in dirs:
+            found[os.path.relpath(os.path.join(current, name), folder)] = None
+        for name in files:
+            full = os.path.join(current, name)
+            try:
+                stat = os.stat(full)
+            except OSError:
+                continue
+            found[os.path.relpath(full, folder)] = [stat.st_size, stat.st_mtime_ns]
+    return found
+
+
+def _remove_recorded(folder: str, recorded: dict) -> None:
+    """Remove only what the AI put in `folder` and nobody has touched since."""
+    current = _snapshot(folder)
+    for rel, stamp in recorded.items():
+        if stamp is not None and current.get(rel) == stamp:
+            os.remove(os.path.join(folder, rel))
+    for rel in sorted((r for r, s in recorded.items() if s is None), key=len, reverse=True):
+        path = os.path.join(folder, rel)
+        if os.path.isdir(path) and not os.listdir(path):
+            os.rmdir(path)
+    if not os.listdir(folder):
+        os.rmdir(folder)
+
+
 def _root(conversation_id: str) -> str:
     return paths.sub("history", conversation_id)
 
@@ -82,7 +112,10 @@ class ChangeSet:
         self.save()
 
     def copy_in(self, target: str, is_dir: bool) -> None:
-        self.ops.append({"op": "created", "path": os.path.abspath(target), "dir": is_dir})
+        op = {"op": "created", "path": os.path.abspath(target), "dir": is_dir}
+        if is_dir:
+            op["files"] = _snapshot(op["path"])
+        self.ops.append(op)
         self.save()
 
     def delete(self, path: str) -> None:
@@ -138,6 +171,10 @@ def conflicts(manifest: dict) -> list:
             found.append(op["target"])
         elif op["op"] == "delete" and os.path.exists(op["path"]):
             found.append(op["path"])
+        elif op["op"] == "created" and op.get("dir") and os.path.isdir(op["path"]):
+            # Something was added to, changed in or taken from a copied folder since.
+            if op.get("files") is None or _snapshot(op["path"]) != op["files"]:
+                found.append(op["path"])
     return found
 
 
@@ -171,7 +208,10 @@ def undo(conversation_id: str, change_id: str, force: bool = False) -> dict:
                     shutil.move(op["backup"], op["path"])
             elif kind == "created":
                 if op.get("dir") and os.path.isdir(op["path"]):
-                    shutil.rmtree(op["path"])
+                    if op.get("files") is not None:
+                        _remove_recorded(op["path"], op["files"])
+                    else:                    # recorded by an older version: no snapshot
+                        shutil.rmtree(op["path"])
                 elif os.path.isfile(op["path"]):
                     os.remove(op["path"])
             elif kind == "mkdir":
