@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aetheris Everyone</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand">
+        <img src="icon.svg" alt="" width="30" height="30">
+        <div class="brand-text"><b>Aetheris</b><span>Everyone</span></div>
+      </div>
+      <button id="newChat" class="btn primary wide"></button>
+      <nav id="convList" aria-label="chats"></nav>
+      <div class="sidebar-foot">
+        <button id="engineStatus" class="engine"></button>
+        <button id="openSettings" class="btn ghost wide"></button>
+      </div>
+    </aside>
+
+    <main id="main">
+      <header id="topbar">
+        <button id="toggleSidebar" class="icon-btn" aria-label="menu"></button>
+        <div id="convTitle"></div>
+        <div class="top-actions">
+          <div class="menu-wrap">
+            <button id="folderChip" class="chip"></button>
+            <div id="folderMenu" class="menu" hidden></div>
+          </div>
+          <div class="menu-wrap">
+            <button id="safetyChip" class="chip"></button>
+            <div id="safetyMenu" class="menu wide" hidden></div>
+          </div>
+        </div>
+      </header>
+
+      <div id="approvalBanner" hidden></div>
+
+      <section id="messages" aria-live="polite"></section>
+
+      <footer id="composer">
+        <div id="attachRow"></div>
+        <div class="composer-box">
+          <button id="attachBtn" class="icon-btn"></button>
+          <textarea id="input" rows="1"></textarea>
+          <button id="sendBtn" class="send"></button>
+        </div>
+        <div class="composer-foot">
+          <label class="switch" id="carefulLabel">
+            <input type="checkbox" id="carefulToggle">
+            <span class="track"><span class="thumb"></span></span>
+            <span id="carefulText"></span>
+          </label>
+          <span id="composerHint" class="muted"></span>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <div id="dropOverlay" hidden><div class="drop-inner"></div></div>
+  <div id="modalRoot"></div>
+  <div id="toasts"></div>
+  <input type="file" id="fileInput" multiple hidden>
+
+  <script src="i18n.js"></script>
+  <script src="markdown.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

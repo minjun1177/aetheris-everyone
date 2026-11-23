@@ -1,0 +1,8 @@
+# The native window. Without it the app opens in an Edge/Chrome app window instead.
+pywebview>=5.3
+# Web search that is not turned away as a bot. Without it, plain HTML search is tried.
+ddgs>=9.0,<10.0
+# Reading PDF text. Without it, PDFs are reported as unreadable.
+pypdf>=5.0
+# Certificates for HTTPS in the packaged app (macOS has none for Python by default).
+certifi

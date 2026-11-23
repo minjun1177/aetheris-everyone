@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aetheris-everyone"
+dynamic = ["version"]
+description = "Aetheris as a desktop app for everyone: an AI assistant that works on your files, in a window - asks before it acts, and every change can be undone."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "minjun1177" }]
+keywords = ["ai", "assistant", "desktop", "gui", "ollama", "local-llm", "agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: MacOS X",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Korean",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "pywebview>=5.3",
+    "ddgs>=9.0,<10.0",
+    "pypdf>=5.0",
+    "certifi",
+]
+
+[project.urls]
+Homepage = "https://github.com/minjun1177/aetheris-everyone"
+"Original Aetheris" = "https://github.com/minjun1177/aetheris"
+
+[project.gui-scripts]
+aetheris-everyone = "aetheris_everyone.launcher:main"
+
+[tool.setuptools]
+packages = ["aetheris_everyone"]
+
+[tool.setuptools.package-data]
+aetheris_everyone = ["web/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "aetheris_everyone.__version__" }
