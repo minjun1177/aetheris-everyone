@@ -169,6 +169,9 @@ def rewind(conversation: dict) -> dict | None:
     cut = next((i for i in range(len(messages) - 1, -1, -1) if _from_person(messages[i])), None)
     if cut is not None:
         conversation["messages"] = messages[:cut]
+        summary = conversation.get("summary") or {}
+        if int(summary.get("upto") or 0) > cut:
+            conversation.pop("summary", None)     # it covered what was just taken back
     changed = [f.get("path", "") for card in kept_cards if not card.get("undone")
                for f in card.get("files") or []]
     if changed:

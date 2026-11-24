@@ -392,3 +392,36 @@ class PicturesInHistory(unittest.TestCase):
         self.assertEqual([m["images"] for m in kept], [[], [], ["p2b"], ["p3a", "p3b"]])
         self.assertIn("no longer attached", kept[0]["content"])
         self.assertNotIn("no longer attached", kept[3]["content"])
+
+
+class LongChats(Sandbox):
+    def test_the_older_part_is_summarised_once_and_sent_instead(self):
+        settings.update({"work_folder": self.work, "safety": "balanced", "context_tokens": 2048})
+        old = conversations.new(self.work)
+        for n in range(12):
+            old["messages"] += [{"role": "user", "content": f"request {n} " + "x" * 400},
+                                {"role": "assistant", "content": f"answer {n} " + "y" * 400}]
+        conversations.save(old)
+        fake = FakeProvider([[{"text": "- The person asked twelve things."}, {"done": True}],
+                             [{"text": "Hello again."}, {"done": True}]], native=False)
+        fake.name = "ollama"
+        original = providers.make
+        providers.make = lambda *a, **k: fake
+        done = threading.Event()
+        try:
+            agent.Agent(lambda e: done.set() if e["type"] == "turn_end" else None).start(old["id"], "and now?", [])
+            self.assertTrue(done.wait(10))
+        finally:
+            providers.make = original
+        saved = conversations.load(old["id"])
+        self.assertEqual(saved["summary"]["text"], "- The person asked twelve things.")
+        self.assertIn({"kind": "notice", "code": "summarised"}, saved["ui"])
+        summary_request, answer_request = fake.seen
+        self.assertIn("request 0", summary_request[1]["content"])
+        self.assertIn("The person asked twelve things", answer_request[1]["content"])
+        self.assertNotIn("request 0 ", "".join(m["content"] for m in answer_request))
+        self.assertEqual(answer_request[-1]["content"], "and now?")
+
+    def test_a_short_chat_is_not_summarised(self):
+        messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+        self.assertEqual(agent.summarise_point(messages, 2000), 0)

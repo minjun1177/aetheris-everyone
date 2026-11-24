@@ -80,6 +80,39 @@ def fit(messages: list, budget: int) -> list:
     return out
 
 
+SUMMARY_PROMPT = (
+    "You keep the memory of a long chat between a person and Aetheris, an assistant that works on "
+    "the files in their folder. Write a summary of the conversation below that lets the chat go "
+    "on without it: what the person wants and their preferences, decisions made, files created, "
+    "changed, moved or deleted (with their names), facts found, and what is still to do. Plain "
+    "bullet points, at most about 250 words, in the language the person writes in. Do not add "
+    "anything that is not in the conversation.")
+SUMMARY_TRIGGER = 0.85           # of the budget: past this, the older part is summarised
+
+
+def summarise_point(messages: list, budget: int, done_upto: int = 0) -> int:
+    """Where to summarise up to (0 = not needed): the history is near the budget, and there is
+    enough not yet summarised to be worth it. Always cut before one of the person's requests."""
+    total = sum(_estimate_tokens(m["content"]) for m in messages[done_upto:])
+    if total <= budget * SUMMARY_TRIGGER or len(messages) - done_upto <= KEEP_RECENT + 4:
+        return 0
+    for index in range(len(messages) - KEEP_RECENT, done_upto, -1):
+        message = messages[index]
+        if message["role"] == "user" and not message["content"].startswith(("[Tool Result", "[System]")):
+            return index
+    return 0
+
+
+def with_summary(conversation: dict) -> list:
+    """The messages the model is sent: the summary of the older part, then the rest."""
+    summary = conversation.get("summary") or {}
+    upto = int(summary.get("upto") or 0)
+    if not summary.get("text") or upto <= 0 or upto > len(conversation["messages"]):
+        return conversation["messages"]
+    return [{"role": "user", "content": "[Summary of the earlier part of this chat]\n" + summary["text"]},
+            {"role": "assistant", "content": "Understood."}] + conversation["messages"][upto:]
+
+
 def keep_recent_pictures(messages: list, keep: int = KEEP_PICTURES) -> list:
     """Only the newest `keep` pictures stay attached: every request sends them all again."""
     count = 0
@@ -279,8 +312,10 @@ class Agent:
                        if m["role"] == "user" and not m["content"].startswith("[")), "")
         system = prompts.system_prompt(ctx.folder, native, careful, latest, ctx.allow_commands)
         if provider.name == "ollama":
+            # The tool definitions are part of the prompt too when they go natively.
+            schemas = json.dumps(tools.schemas(ctx.allow_commands), ensure_ascii=False) if native else ""
             budget = int(int(settings.get("context_tokens") or 16384) * 0.7) - \
-                _estimate_tokens(system)
+                _estimate_tokens(system) - _estimate_tokens(schemas)
         else:
             budget = 120_000
         seen_calls: dict = {}
@@ -291,8 +326,9 @@ class Agent:
         for _step in range(MAX_STEPS):
             if self.cancel.is_set():
                 return
+            self._summarise_if_needed(conversation, provider, max(2000, budget))
             history_now = [{"role": "system", "content": system}] + \
-                keep_recent_pictures(fit(conversation["messages"], max(2000, budget)))
+                keep_recent_pictures(fit(with_summary(conversation), max(2000, budget)))
             reply_id = uuid.uuid4().hex[:10]
             self.emit({"type": "reply_start", "conversation": cid, "id": reply_id})
             raw, native_calls, thinking, truncated = self._stream_reply(
@@ -452,6 +488,48 @@ class Agent:
                        "kind": "thinking" if kind == "think" else "text", "text": piece})
         return "".join(raw), calls, "".join(thinking), truncated
 
+
+    def _summarise_if_needed(self, conversation: dict, provider, budget: int) -> None:
+        """Summarise the older part of a long chat once, instead of silently dropping it."""
+        summary = conversation.get("summary") or {}
+        done = int(summary.get("upto") or 0)
+        upto = summarise_point(conversation["messages"], budget, done)
+        if not upto or self.cancel.is_set():
+            return
+        lines = []
+        if summary.get("text"):
+            lines.append("Summary so far:\n" + summary["text"])
+        for message in conversation["messages"][done:upto]:
+            content = message["content"]
+            lines.append(f"{message['role']}: {content[:1500]}"
+                         + (" ... (shortened)" if len(content) > 1500 else ""))
+        language = prompts.language_of(" ".join(m["content"] for m in conversation["messages"][done:upto]
+                                                 if m["role"] == "user")[:4000])
+        instruction = SUMMARY_PROMPT + (f" Write the summary in {language}." if language else "")
+        request = [{"role": "system", "content": instruction},
+                   {"role": "user", "content": "\n\n".join(lines)[-60000:]}]
+        try:
+            stream = provider.stream(request, tools=None, think=False)
+            self._stream = stream
+            pieces = []
+            for event in stream:
+                if self.cancel.is_set():
+                    return
+                if "text" in event:
+                    pieces.append(event["text"])
+                elif "usage" in event:
+                    self._last_usage = event["usage"]
+        except providers.ProviderError:
+            return                         # the history is cut to fit instead, as before
+        finally:
+            self._stream = None
+        self._count_usage(conversation, provider)
+        text = toolcalls.strip_thinking("".join(pieces)).strip()
+        if not text:
+            return
+        conversation["summary"] = {"text": text[:6000], "upto": upto}
+        self._ui(conversation, {"kind": "notice", "code": "summarised"})
+        conversations.save(conversation)
 
     def _count_usage(self, conversation: dict, provider) -> dict | None:
         """Add the last request's tokens to the chat and the monthly ledger, and tell the window."""
