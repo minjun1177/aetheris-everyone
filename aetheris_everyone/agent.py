@@ -160,7 +160,8 @@ class Agent:
         self._last_usage: dict | None = None  # tokens of the latest request, from the stream
 
     # -- control from the window ----------------------------------------------
-    def start(self, conversation_id: str, text: str, attachments: list, quote: str = "") -> str:
+    def start(self, conversation_id: str, text: str, attachments: list, quote: str = "",
+              scheduled: bool = False) -> str:
         with self._lock:
             if self.busy:
                 raise Busy()
@@ -174,8 +175,8 @@ class Agent:
             self.busy = conversation["id"]
             self.current = conversation
             self.cancel.clear()
-        thread = threading.Thread(target=self._run, args=(conversation, text, attachments, quote),
-                                  daemon=True)
+        thread = threading.Thread(target=self._run, args=(conversation, text, attachments, quote,
+                                                          scheduled), daemon=True)
         self._thread = thread
         thread.start()
         return conversation["id"]
@@ -234,7 +235,8 @@ class Agent:
         conversation["ui"].append(item)
         self.emit({"type": "item", "conversation": conversation["id"], "item": item})
 
-    def _run(self, conversation: dict, text: str, attachments: list, quote: str = "") -> None:
+    def _run(self, conversation: dict, text: str, attachments: list, quote: str = "",
+             scheduled: bool = False) -> None:
         cid = conversation["id"]
         folder = conversation.get("folder") or settings.get("work_folder") or os.path.expanduser("~")
         if not conversation.get("folder"):
@@ -249,8 +251,12 @@ class Agent:
                                     "attachments": [{"name": os.path.basename(p), "path": p,
                                                      "image": providers.is_image(p)}
                                                     for p in attachments],
-                                    **({"quote": quote} if quote else {})})
+                                    **({"quote": quote} if quote else {}),
+                                    **({"scheduled": True} if scheduled else {})})
             content = text
+            if scheduled:
+                content = ("[This request was started by a schedule the person set; they may not "
+                           "be watching. Do what it asks.]\n" + text)
             if quote:
                 # The part of the chat the person selected and is answering or asking about.
                 content = ("About this part of our conversation:\n\"\"\"\n" + quote + "\n\"\"\"\n\n"

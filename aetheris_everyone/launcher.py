@@ -163,6 +163,7 @@ def main(argv: list | None = None) -> int:
         print(f"could not recover change cards: {error}", file=sys.stderr)
     app = server.App()
     httpd = server.serve(app)
+    app.start_scheduler()
     url = f"http://127.0.0.1:{app.port}/?t={app.token}"
     paths.write_json(_instance_file(), {"port": app.port, "token": app.token, "pid": os.getpid()},
                      private=True)

@@ -14,6 +14,7 @@ import os
 import queue
 import secrets
 import shutil
+import sys
 import threading
 import time
 import urllib.parse
@@ -21,8 +22,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from aetheris_everyone import (__version__, agent, conversations, folder_rules, history, memory,
-                               ollama_setup, paths, providers, saved_requests, settings, system,
-                               usage, websearch)
+                               ollama_setup, paths, providers, saved_requests, schedules, settings,
+                               system, usage, websearch)
 
 MAX_UPLOAD = 200 * 1024 * 1024
 
@@ -84,6 +85,7 @@ class App:
                 "conversations": conversations.list_all(),
                 "memories": memory.load(),
                 "saved_requests": saved_requests.load(),
+                "schedules": schedules.load(),
                 "jobs": self.bus.last_job, "job_running": bool(self.job_thread
                                                                 and self.job_thread.is_alive()),
                 "default_folder": paths.default_work_folder(),
@@ -91,6 +93,29 @@ class App:
                 "key_storage": settings.key_storage(),
                 "can_shortcut": system.can_make_shortcut(),
                 "home": os.path.expanduser("~")}
+
+    def run_schedules(self, now: float | None = None) -> list:
+        """Start the scheduled requests that are due (one at a time). Returns their ids."""
+        started = []
+        for item in schedules.take_due(time.time() if now is None else now, bool(self.agent.busy)):
+            try:
+                self.agent.start(schedule_conversation(item), item["text"], [], scheduled=True)
+            except agent.Busy:
+                continue
+            started.append(item["id"])
+            self.bus.publish({"type": "settings_changed"})
+        return started
+
+    def start_scheduler(self) -> None:
+        def loop():
+            while True:
+                time.sleep(20)
+                try:
+                    self.run_schedules()
+                except Exception as error:      # a bad schedule must not stop the others
+                    print(f"schedule: {error}", file=sys.stderr)
+
+        threading.Thread(target=loop, daemon=True).start()
 
     def run_job(self, target, *args) -> bool:
         if self.job_thread and self.job_thread.is_alive():
@@ -507,6 +532,33 @@ class Handler(BaseHTTPRequestHandler):
                 conversations.save(conversation)
         return self._json(result)
 
+    def _post_schedules_save(self, body):
+        folder = str(body.get("folder") or settings.get("work_folder") or paths.default_work_folder())
+        try:
+            item = schedules.save(body.get("text", ""), body.get("when"), folder, body.get("title", ""),
+                                  body.get("id", ""), body.get("enabled", True) is not False)
+        except (ValueError, TypeError) as error:
+            code = str(error) if isinstance(error, ValueError) and str(error) in (
+                "empty", "past", "bad_schedule") else "bad_schedule"
+            return self._json({"ok": False, "error": code})
+        return self._json({"ok": True, "item": item, "items": schedules.load()})
+
+    def _post_schedules_delete(self, body):
+        schedules.remove(str(body.get("id") or ""))
+        return self._json({"ok": True, "items": schedules.load()})
+
+    def _post_schedules_run(self, body):
+        """Run one now (the window's "run now"), keeping its regular times."""
+        item = next((i for i in schedules.load() if i["id"] == body.get("id")), None)
+        if item is None:
+            return self._json({"ok": False, "error": "other"})
+        try:
+            conversation_id = self.app.agent.start(schedule_conversation(item), item["text"], [],
+                                                   scheduled=True)
+        except agent.Busy:
+            return self._json({"ok": False, "error": "busy"})
+        return self._json({"ok": True, "conversation": conversation_id})
+
     def _post_requests_save(self, body):
         try:
             item = saved_requests.save(body.get("text", ""), body.get("title", ""), body.get("id", ""))
@@ -577,6 +629,18 @@ def serve(app: App, port: int = 0) -> ThreadingHTTPServer:
     app.port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+def schedule_conversation(item: dict) -> str:
+    """The chat a schedule writes into, made the first time it runs."""
+    conversation = conversations.load(item.get("conversation") or "")
+    if conversation is None:
+        folder = item.get("folder") or settings.get("work_folder") or paths.default_work_folder()
+        conversation = conversations.new(folder)
+        conversation["title"] = "⏰ " + item["title"]
+        conversations.save(conversation)
+        schedules.set_conversation(item["id"], conversation["id"])
+    return conversation["id"]
 
 
 def recover_changes() -> int:

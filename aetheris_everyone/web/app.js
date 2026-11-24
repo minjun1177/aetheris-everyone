@@ -69,6 +69,7 @@ const ICONS = {
   book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/>',
   wand: '<path d="M15 4V2M15 10V8M11 6h2M17 6h2M4 20l11-11"/>',
   back: '<path d="M19 12H5M11 18l-6-6 6-6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
 };
 
 function icon(name, cls = "i") {
@@ -242,6 +243,68 @@ function closeMenus() {
   $("safetyMenu").hidden = true;
   $("modelMenu").hidden = true;
   $("savedMenu").hidden = true;
+}
+
+/* ------------------------------------------------------------ schedules */
+
+const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];      // Monday first, as Python counts them
+
+function formatWhen(epoch) {
+  return new Date(epoch * 1000).toLocaleString(LANG === "ko" ? "ko-KR" : "en-GB", { month: "short", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function describeWhen(when) {
+  if (!when) return "";
+  if (when.kind === "once") return t("sched.once.at", { at: formatWhen(when.at) });
+  if (when.kind === "daily") return t("sched.daily.at", { time: when.time });
+  return t("sched.weekly.at", { day: t("sched.day." + when.day), time: when.time });
+}
+
+function editSchedule(item, after) {
+  const when = item.when || { kind: "daily", time: "09:00" };
+  const title = h("input", { class: "input", value: item.title || "", placeholder: t("saved.name") });
+  const text = h("textarea", { class: "input rules", rows: "4", placeholder: t("sched.placeholder") });
+  text.value = item.text || $("input").value || "";
+  const kind = h("select", { class: "input" }, ...["daily", "weekly", "once"].map((k) => h("option", { value: k, text: t("sched." + k) })));
+  kind.value = when.kind;
+  const day = h("select", { class: "input" }, ...WEEKDAYS.map((d) => h("option", { value: String(d), text: t("sched.day." + d) })));
+  day.value = String(when.day || 0);
+  const pad = (n) => String(n).padStart(2, "0");
+  const onceAt = when.kind === "once" ? new Date(when.at * 1000) : new Date(Date.now() + 3600 * 1000);
+  const date = h("input", { class: "input", type: "date", value: `${onceAt.getFullYear()}-${pad(onceAt.getMonth() + 1)}-${pad(onceAt.getDate())}` });
+  const clock = h("input", { class: "input", type: "time", value: when.kind === "once" ? `${pad(onceAt.getHours())}:${pad(onceAt.getMinutes())}` : (when.time || "09:00") });
+  const dayField = h("div", { class: "field" }, h("label", { text: t("sched.weekday") }), day);
+  const dateField = h("div", { class: "field" }, h("label", { text: t("sched.date") }), date);
+  const show = () => { dayField.hidden = kind.value !== "weekly"; dateField.hidden = kind.value !== "once"; };
+  kind.addEventListener("change", show);
+  show();
+  const status = h("div", { class: "err-text" });
+  const m = modal([
+    h("h2", { text: t(item.id ? "saved.edit" : "sched.new") }),
+    h("p", { class: "lead", text: t("sched.form.lead", { folder: baseName(item.folder || currentFolder()) }) }),
+    h("div", { class: "field" }, h("label", { text: t("saved.text") }), text),
+    h("div", { class: "field" }, h("label", { text: t("saved.name") }), title),
+    h("div", { class: "row", style: "align-items:flex-start" },
+      h("div", { class: "field", style: "flex:1" }, h("label", { text: t("sched.repeat") }), kind), dayField, dateField,
+      h("div", { class: "field" }, h("label", { text: t("sched.time") }), clock)),
+    h("small", { class: "muted", text: t("sched.note") }),
+    status,
+    h("div", { class: "modal-foot" }, h("div", { class: "right" },
+      h("button", { class: "btn", text: t("confirm.cancel"), onclick: () => m.close() }),
+      h("button", { class: "btn primary", text: t("rules.save"), onclick: async () => {
+        const spec = kind.value === "once"
+          ? { kind: "once", at: new Date(`${date.value}T${clock.value || "09:00"}`).getTime() / 1000 }
+          : { kind: kind.value, time: clock.value || "09:00", day: Number(day.value) };
+        const result = await api("schedules/save", { id: item.id || "", title: title.value, text: text.value, when: spec,
+          folder: item.folder || currentFolder(), enabled: item.id ? item.enabled : true });
+        if (!result.ok) { status.textContent = errText(result.error); return; }
+        if (S.state) S.state.schedules = result.items;
+        m.close();
+        toast(t("sched.saved", { at: result.item.next ? formatWhen(result.item.next) : "-" }));
+        if (after) after();
+      } }))),
+  ]);
+  text.focus();
 }
 
 /* ------------------------------------------------------- saved requests */
@@ -695,6 +758,7 @@ function userMessage(item) {
     ? h("img", { class: "thumb", src: `/api/file?t=${encodeURIComponent(TOKEN)}&path=${encodeURIComponent(a.path)}`, alt: a.name })
     : h("span", { class: "att", html: icon("file") + " " + escapeHtml(a.name) }));
   return h("div", { class: "msg user" }, h("div", { class: "bubble" },
+    item.scheduled ? h("div", { class: "sched-mark", html: icon("clock") + escapeHtml(t("sched.mark")) }) : null,
     item.quote ? h("div", { class: "quote", text: item.quote }) : null,
     atts.length ? h("div", { class: "atts" }, ...atts) : null,
     item.text && item.text !== "(see attached)" ? h("div", { text: item.text }) : null));
@@ -1645,7 +1709,7 @@ function openSetup(startStep = 0) {
 // Settings open in the main area, in place of the chat (like a desktop app's
 // preferences page), with their sections listed down the left.
 const SETTINGS_SECTIONS = [
-  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["saved", "wand"], ["usage", "table"], ["storage", "trash"], ["about", "info"],
+  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["saved", "wand"], ["schedules", "clock"], ["usage", "table"], ["storage", "trash"], ["about", "info"],
 ];
 const SETTINGS_PAGES = {};
 
@@ -1843,7 +1907,36 @@ function openSettings(tab = "general") {
     ];
   }
 
-  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, saved: savedPage, usage: usagePage, storage: storagePage, about });
+  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, saved: savedPage, schedules: schedulesPage, usage: usagePage, storage: storagePage, about });
+
+  function schedulesPage() {
+    const items = (S.state && S.state.schedules) || [];
+    const reload = (result) => { if (result.items && S.state) S.state.schedules = result.items; draw(); };
+    return [
+      h("p", { class: "lead muted", text: t("sched.lead") }),
+      items.length ? h("div", { class: "memories" }, ...items.map((item) => {
+        const toggle = h("input", { type: "checkbox" });
+        toggle.checked = !!item.enabled;
+        toggle.addEventListener("change", async () => reload(await api("schedules/save", { ...item, enabled: toggle.checked })));
+        return h("div", { class: "change-row" },
+          h("label", { class: "switch small", title: t("sched.enabled") }, toggle, h("span", { class: "track" }, h("span", { class: "thumb" }))),
+          h("span", { class: "name", title: item.text }, h("b", { text: item.title }),
+            h("small", { text: [describeWhen(item.when), item.enabled && item.next ? t("sched.next", { at: formatWhen(item.next) }) : t("sched.off"),
+              item.missed ? t("sched.missed", { at: formatWhen(item.missed) }) : ""].filter(Boolean).join(" · ") })),
+          h("span", { class: "row-acts" },
+            h("button", { class: "btn small ghost", html: icon("up") + escapeHtml(t("sched.run")), onclick: async () => {
+              const result = await api("schedules/run", { id: item.id });
+              if (!result.ok) return toast(errText(result.error));
+              closeSettings();
+              openConversation(result.conversation);
+            } }),
+            h("button", { class: "btn small ghost", html: icon("pencil"), title: t("saved.edit"), onclick: () => editSchedule(item, draw) }),
+            h("button", { class: "btn small ghost", html: icon("trash"), title: t("settings.mem.delete"), onclick: async () => reload(await api("schedules/delete", { id: item.id })) })));
+      })) : h("p", { class: "muted", text: t("sched.empty") }),
+      h("div", { class: "row", style: "margin-top:12px" },
+        h("button", { class: "btn small", html: icon("plus") + escapeHtml(t("sched.new")), onclick: () => editSchedule({}, draw) })),
+    ];
+  }
 
   function savedPage() {
     const items = savedRequests();

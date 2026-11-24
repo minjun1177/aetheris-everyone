@@ -384,6 +384,8 @@ details.thoughts div { white-space: pre-wrap; border-left: 2px solid var(--line)
 #quoteRow .q { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #quoteRow button { border: 0; background: transparent; color: var(--muted); padding: 2px; border-radius: 6px; display: flex; }
 #quoteRow button:hover { color: var(--err); }
+.msg.user .sched-mark { display: flex; align-items: center; gap: 5px; font-size: 12px; opacity: 0.85; margin-bottom: 4px; }
+.msg.user .sched-mark svg.i { width: 14px; height: 14px; }
 .msg.user .quote {
   border-left: 3px solid rgba(255, 255, 255, 0.55); padding: 2px 0 2px 10px; margin-bottom: 6px;
   font-size: 13px; opacity: 0.85; max-height: 4.6em; overflow: hidden; white-space: pre-wrap;
