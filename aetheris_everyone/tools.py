@@ -770,7 +770,7 @@ TOOLS = [
      "properties": {"query": _p("string", "What to search for.")},
      "required": ["query"]},
     {"name": "read_webpage", "category": "web", "fn": read_webpage,
-     "description": "Read the text of a public web page.",
+     "description": "Read the text of a public web page, or of a PDF document on the web.",
      "properties": {"url": _p("string", "The page address.")},
      "required": ["url"]},
 ]

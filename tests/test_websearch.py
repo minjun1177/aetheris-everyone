@@ -212,3 +212,52 @@ class SearXNG(Sandbox):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _tiny_pdf(text: str) -> bytes:
+    """A one-page PDF showing `text`, built by hand (offsets included)."""
+    stream = f"BT /F1 24 Tf 72 720 Td ({text}) Tj ET".encode()
+    objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
+               b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+               b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+               b"/Resources << /Font << /F1 5 0 R >> >> >>",
+               b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+               b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    return out
+
+
+class ReadingFiles(unittest.TestCase):
+    def setUp(self):
+        self.site = LocalSite({
+            "/report": (200, {"Content-Type": "application/pdf"}, _tiny_pdf("Quarterly sales grew")),
+            "/photo": (200, {"Content-Type": "image/jpeg"}, b"\xff\xd8\xff\xe0\x00\x10JFIF"),
+            "/mislabelled": (200, {"Content-Type": "application/octet-stream"},
+                             b"<title>Plain</title><p>Readable after all</p>"),
+        })
+
+    def tearDown(self):
+        self.site.close()
+
+    def test_a_pdf_link_is_read_as_its_text(self):
+        try:
+            import pypdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pypdf is not installed")
+        text = websearch.read_page(self.site.base + "/report", public=False)
+        self.assertIn("PDF document", text)
+        self.assertIn("Quarterly sales grew", text)
+
+    def test_a_picture_is_refused_and_a_mislabelled_page_still_read(self):
+        with self.assertRaises(ValueError) as caught:
+            websearch.read_page(self.site.base + "/photo", public=False)
+        self.assertIn("image/jpeg", str(caught.exception))
+        self.assertIn("Readable after all", websearch.read_page(self.site.base + "/mislabelled",
+                                                                public=False))

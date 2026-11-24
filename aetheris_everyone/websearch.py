@@ -24,7 +24,7 @@ import urllib.parse
 import zlib
 from html.parser import HTMLParser
 
-from aetheris_everyone import providers, settings
+from aetheris_everyone import documents, providers, settings
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/130.0 Safari/537.36")
@@ -154,6 +154,24 @@ def _request(url: str, data, timeout: float, public: bool, headers: dict | None 
 def fetch(url: str, data: bytes | None = None, timeout: float = 20, public: bool = True,
           headers: dict | None = None) -> tuple:
     """(final url, decoded text) of a web page - a public one unless `public` is False."""
+    url, response_headers, raw = fetch_raw(url, data, timeout, public, headers)
+    return url, _decode(raw, response_headers)
+
+
+def _decode(raw: bytes, response_headers) -> str:
+    charset = response_headers.get_content_charset()
+    if not charset:
+        match = re.search(rb'charset=["\']?([A-Za-z0-9_\-]+)', raw[:4000])
+        charset = match.group(1).decode() if match else "utf-8"
+    try:
+        return raw.decode(charset, "replace")
+    except LookupError:
+        return raw.decode("utf-8", "replace")
+
+
+def fetch_raw(url: str, data: bytes | None = None, timeout: float = 20, public: bool = True,
+              headers: dict | None = None) -> tuple:
+    """(final url, response headers, unpacked body bytes) after following redirects."""
     url = normalise_url(url)
     for _ in range(MAX_REDIRECTS + 1):
         status, response_headers, raw = _request(url, data, timeout, public, headers)
@@ -166,15 +184,7 @@ def fetch(url: str, data: bytes | None = None, timeout: float = 20, public: bool
         if status >= 400:
             raise HTTPStatusError(status)
         raw = _decompress(raw, (response_headers.get("Content-Encoding") or "").lower())
-        charset = response_headers.get_content_charset()
-        if not charset:
-            match = re.search(rb'charset=["\']?([A-Za-z0-9_\-]+)', raw[:4000])
-            charset = match.group(1).decode() if match else "utf-8"
-        try:
-            text = raw.decode(charset, "replace")
-        except LookupError:
-            text = raw.decode("utf-8", "replace")
-        return url, text
+        return url, response_headers, raw
     raise RuntimeError("the page redirected too many times")
 
 
@@ -226,9 +236,25 @@ def page_text(markup: str) -> tuple:
     return parser.title.strip(), "\n".join(lines).strip()
 
 
-def read_page(url: str) -> str:
-    final, markup = fetch(url)
-    title, text = page_text(markup)
+_MEDIA = ("image/", "audio/", "video/", "font/")
+
+
+def read_page(url: str, public: bool = True) -> str:
+    final, response_headers, raw = fetch_raw(url, public=public)
+    kind = (response_headers.get_content_type() or "").lower()
+    if kind == "application/pdf" or raw[:5] == b"%PDF-":
+        if len(raw) >= READ_LIMIT:
+            raise ValueError("the PDF is larger than can be downloaded here (5 MB); ask the user "
+                             "to download it and attach it")
+        text = documents.pdf_bytes_text(raw)
+        if len(text) > PAGE_LIMIT * 2:
+            text = text[:PAGE_LIMIT * 2] + "\n... (the rest of the PDF was cut off)"
+        return f"PDF document\nURL: {final}\n\n{text or '(no readable text)'}"
+    if kind.startswith(_MEDIA) or b"\x00" in raw[:4096]:
+        # A picture, a zip, a program: decoding it as text would only hand the AI noise.
+        raise ValueError(f"that address is not a web page but a file ({kind}); it cannot be read "
+                         "as text here")
+    title, text = page_text(_decode(raw, response_headers))
     if len(text) > PAGE_LIMIT:
         text = text[:PAGE_LIMIT] + "\n... (the rest of the page was cut off)"
     return f"Title: {title or '(none)'}\nURL: {final}\n\n{text or '(no readable text)'}"

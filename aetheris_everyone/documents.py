@@ -114,7 +114,8 @@ def _hwpx(path: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
 
 
-def _pdf(path: str) -> str:
+def _pdf(path) -> str:
+    """Text of a PDF: a path, or a binary stream (a PDF read from the web)."""
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -129,6 +130,16 @@ def _pdf(path: str) -> str:
     if not text.replace("## Page", "").strip(" \n0123456789"):
         return "(This PDF has no text layer - it is probably a scanned image.)"
     return text
+
+
+def pdf_bytes_text(data: bytes) -> str:
+    """Text of a PDF held in memory. Raises ValueError when it cannot be read."""
+    try:
+        return _pdf(io.BytesIO(data))[:TEXT_LIMIT]
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError(f"the PDF looks damaged or is protected ({type(error).__name__})") from None
 
 
 def extract(path: str) -> str:
