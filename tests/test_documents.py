@@ -143,13 +143,62 @@ class OtherReaders(TempDir):
             documents.extract(self.save("a.odt", b""))
 
 
+DECK = """# 2분기 실적 보고
+영업팀 · 2026년 7월
+
+# 요약
+- 매출 **12% 증가**
+- 신규 고객 30곳
+  - 수도권 18곳
+1. 다음 분기 목표 정하기
+
+# 다음 단계
+신제품 출시 & 홍보 <일정> 확정
+"""
+
+
+class PowerPoint(unittest.TestCase):
+    def test_a_deck_is_a_real_package_and_reads_back(self):
+        data = documents.markdown_to_pptx(DECK)
+        archive = check_package(self, data, "ppt/presentation.xml")
+        self.assertEqual(sorted(n for n in archive.namelist() if n.startswith("ppt/slides/slide")),
+                         ["ppt/slides/slide1.xml", "ppt/slides/slide2.xml", "ppt/slides/slide3.xml"])
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "deck.pptx")
+            with open(path, "wb") as f:
+                f.write(data)
+            text = documents.extract(path)
+        for expected in ("## Slide 1", "2분기 실적 보고", "매출 12% 증가", "수도권 18곳", "신제품 출시 & 홍보 <일정> 확정"):
+            self.assertIn(expected, text)
+
+    def test_python_pptx_opens_it(self):
+        try:
+            from pptx import Presentation
+        except ImportError:
+            self.skipTest("python-pptx is not installed")
+        deck = Presentation(io.BytesIO(documents.markdown_to_pptx(DECK)))
+        self.assertEqual(len(deck.slides), 3)
+        titles = [shape.text_frame.text for slide in deck.slides for shape in slide.shapes
+                  if shape.name == "Title"]
+        self.assertEqual(titles, ["2분기 실적 보고", "요약", "다음 단계"])
+
+    def test_slides_from_markdown(self):
+        slides = documents.markdown_to_slides("# A\n- one\n  - two\n1) three\nplain\n---\n- untitled")
+        self.assertEqual(slides, [("A", [(0, "one", "dot"), (1, "two", "dot"), (0, "three", "number"),
+                                         (0, "plain", "")]),
+                                  ("", [(0, "untitled", "dot")])])
+        with self.assertRaises(ValueError):
+            documents.markdown_to_pptx("   ")
+
+
 @unittest.skipUnless(shutil.which("soffice"), "LibreOffice is not installed")
 class OpensInAnOfficeSuite(TempDir):
     """With LibreOffice present, prove the files open by converting them."""
 
     def test_converts(self):
         for name, data in (("r.docx", documents.markdown_to_docx("# 제목\n| a | b |\n|---|---|\n| 1 | 2 |")),
-                           ("r.xlsx", documents.rows_to_xlsx([["a", "b"], ["1", "2"]]))):
+                           ("r.xlsx", documents.rows_to_xlsx([["a", "b"], ["1", "2"]])),
+                           ("r.pptx", documents.markdown_to_pptx("# 제목\n- 하나\n- 둘"))):
             path = self.save(name, data)
             subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", self.dir, path],
                            check=True, capture_output=True, timeout=120)

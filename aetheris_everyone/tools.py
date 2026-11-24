@@ -354,9 +354,9 @@ def write_file(ctx: Context, path: str, content: str = "", append: bool = False)
             data = documents.render(target, content)
         except ValueError as error:
             raise ToolError(str(error)) from None
-    elif lower.endswith((".pdf", ".pptx", ".hwp", ".hwpx", ".doc", ".xls", ".ppt")):
-        raise ToolError(f"{os.path.splitext(target)[1]} files cannot be written. "
-                        "Write .docx (Word), .xlsx (Excel), .md, .txt, .csv or .html instead.")
+    elif lower.endswith((".pdf", ".hwp", ".hwpx", ".doc", ".xls", ".ppt")):
+        raise ToolError(f"{os.path.splitext(target)[1]} files cannot be written. Write .docx "
+                        "(Word), .xlsx (Excel), .pptx (PowerPoint), .md, .txt, .csv or .html instead.")
     ctx.ensure_parent(target)
     ctx.changes.before_write(target)
     if data is not None:
@@ -393,7 +393,7 @@ def edit_file(ctx: Context, path: str, old_text: str, new_text: str = "",
         raise _missing(ctx, target, "no file")
     if target.lower().endswith(documents.READABLE):
         raise ToolError("documents cannot be edited piece by piece; read it, then write the "
-                        "whole new version with write_file (as .docx / .xlsx)")
+                        "whole new version with write_file (as .docx / .xlsx / .pptx)")
     if not old_text:
         raise ToolError("old_text is required: the exact text to replace")
     replace_all = str(replace_all).lower() in ("true", "1", "yes")
@@ -738,17 +738,19 @@ TOOLS = [
      "description": "Create a file, or replace one completely. A path ending in .docx becomes a "
                     "real Word document (write the content as markdown: # headings, - lists, "
                     "**bold**, | tables |). A path ending in .xlsx becomes a real Excel sheet "
-                    "(write the content as CSV or a markdown table). Folders are created as needed.",
+                    "(write the content as CSV or a markdown table). A path ending in .pptx becomes "
+                    "a real PowerPoint deck (markdown: '# Title' starts each slide, '- ' lines are "
+                    "its points). Folders are created as needed.",
      "properties": {"path": _p("string", "The file to write."),
                     "content": _p("string", "The complete content of the file (or, with "
                                             "append, the text to add)."),
                     "append": _p("boolean", "true = add content at the end of an existing "
                                             "plain text file (.txt, .md, .csv ...) instead of "
-                                            "replacing it. Not for .docx / .xlsx.")},
+                                            "replacing it. Not for .docx / .xlsx / .pptx.")},
      "required": ["path", "content"]},
     {"name": "edit_file", "category": "change", "fn": edit_file,
      "description": "Change part of a text file: replace old_text (copied exactly from the file) "
-                    "with new_text. For Word/Excel files use write_file instead.",
+                    "with new_text. For Word/Excel/PowerPoint files use write_file instead.",
      "properties": {"path": _p("string", "The file to edit."),
                     "old_text": _p("string", "The exact text to replace."),
                     "new_text": _p("string", "What to put instead (empty to remove)."),

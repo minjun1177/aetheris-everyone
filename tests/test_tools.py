@@ -400,3 +400,14 @@ class LookingAtPictures(Sandbox):
         status, result, _ = tools.dispatch(ctx, "view_image", {"path": "big.jpg"})
         self.assertIn("too large", result)
         self.assertEqual(ctx.shown, [])
+
+
+class WritingDecks(Sandbox):
+    def test_write_file_makes_a_deck_and_refuses_to_append_to_one(self):
+        ctx = self.context()
+        status, result, _ = tools.dispatch(ctx, "write_file", {"path": "talk.pptx", "content": "# Hi\n- one"})
+        self.assertEqual(status, "ok", result)
+        self.assertIn("## Slide 1", documents.extract(os.path.join(self.work, "talk.pptx")))
+        status, result, _ = tools.dispatch(ctx, "write_file", {"path": "talk.pptx", "content": "- two",
+                                                               "append": True})
+        self.assertEqual(status, "error")

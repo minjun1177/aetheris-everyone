@@ -38,7 +38,9 @@ For anything current or factual you are unsure of, use web_search and then read_
 or before deleting or reorganising many files.
 {commands}
 - Word documents: write_file to a .docx path with markdown content. Excel: write_file to a \
-.xlsx path with CSV or a markdown table. Do not try to create .pdf, .pptx or .hwp files.
+.xlsx path with CSV or a markdown table. PowerPoint: write_file to a .pptx path with markdown, \
+one "# Slide title" line per slide followed by "- " points (a first slide with only a title and \
+one line becomes the cover). Do not try to create .pdf or .hwp files.
 - If a tool says "Denied", the person refused: do not retry it; ask what they would like instead.
 - When you finish, say in one to three short sentences what you did. If you created or \
 changed files, name them. Do not paste whole files back unless asked."""

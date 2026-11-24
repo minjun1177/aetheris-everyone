@@ -21,7 +21,7 @@ _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 
 READABLE = (".docx", ".xlsx", ".pptx", ".hwpx", ".pdf")
-WRITABLE = (".docx", ".xlsx")
+WRITABLE = (".docx", ".xlsx", ".pptx")
 
 
 def _xml(archive: zipfile.ZipFile, name: str):
@@ -394,10 +394,192 @@ def rows_to_xlsx(rows: list) -> bytes:
     return _zip(files)
 
 
+# -- PowerPoint -------------------------------------------------------------------
+
+_PNS = ('xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"')
+_XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+_SLIDE_W, _SLIDE_H = 12192000, 6858000          # 16:9
+_EMPTY_TREE = ('<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+               '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/>'
+               '<a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>')
+
+
+def markdown_to_slides(text: str) -> list:
+    """[(title, [(level, text, mark)])] - each '# ' heading (or a line '---') starts a slide.
+
+    mark: "dot" for a bullet, "number" for a numbered item, "" for a plain line."""
+    slides, title, body = [], None, []
+
+    def close():
+        if title is not None or body:
+            slides.append((title or "", body))
+
+    for line in text.replace("\r\n", "\n").split("\n"):
+        stripped = line.strip()
+        heading = re.match(r"^#{1,2}\s+(.*)", stripped)
+        if heading or stripped in ("---", "***"):
+            close()
+            title, body = (heading.group(1).strip() if heading else None), []
+            continue
+        if not stripped:
+            continue
+        bullet = re.match(r"^(\s*)([-*•]|\d+[.)])\s+(.*)", line)
+        sub = re.match(r"^#{3,6}\s+(.*)", stripped)
+        if sub:
+            body.append((0, "**" + sub.group(1) + "**", ""))
+        elif bullet:
+            level = min(2, len(bullet.group(1).replace("\t", "  ")) // 2)
+            body.append((level, bullet.group(3), "number" if bullet.group(2)[0].isdigit() else "dot"))
+        else:
+            body.append((0, stripped, ""))
+    close()
+    return slides
+
+
+def _pptx_runs(text: str, size: int, bold: bool = False) -> str:
+    out = []
+    for piece in re.split(r"(\*\*[^*]+\*\*)", text):
+        if not piece:
+            continue
+        strong = bold or (piece.startswith("**") and piece.endswith("**") and len(piece) > 4)
+        piece = piece[2:-2] if piece.startswith("**") and piece.endswith("**") and len(piece) > 4 else piece
+        weight = ' b="1"' if strong else ""
+        out.append(f'<a:r><a:rPr lang="ko-KR" sz="{size}"{weight} dirty="0">'
+                   '<a:latin typeface="Malgun Gothic"/><a:ea typeface="Malgun Gothic"/></a:rPr>'
+                   f'<a:t>{_esc(piece)}</a:t></a:r>')
+    return "".join(out) or f'<a:endParaRPr lang="ko-KR" sz="{size}"/>'
+
+
+def _text_box(shape_id: int, name: str, x: int, y: int, cx: int, cy: int, paragraphs: str,
+              anchor: str = "t") -> str:
+    return (f'<p:sp><p:nvSpPr><p:cNvPr id="{shape_id}" name="{name}"/><p:cNvSpPr txBox="1"/><p:nvPr/>'
+            f'</p:nvSpPr><p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+            '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>'
+            f'<p:txBody><a:bodyPr wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" '
+            f'anchor="{anchor}"><a:normAutofit/></a:bodyPr><a:lstStyle/>{paragraphs}</p:txBody></p:sp>')
+
+
+def _slide_xml(title: str, body: list, cover: bool) -> str:
+    shapes = []
+    if cover:                                     # a title slide: big title, the rest under it
+        shapes.append(_text_box(2, "Title", 838200, 2130000, 10515600, 1470000,
+                                f'<a:p><a:pPr algn="ctr"/>{_pptx_runs(title, 4400, True)}</a:p>', "b"))
+        lines = "".join(f'<a:p><a:pPr algn="ctr"/>{_pptx_runs(text, 2400)}</a:p>' for _, text, _ in body)
+        if lines:
+            shapes.append(_text_box(3, "Subtitle", 1524000, 3700000, 9144000, 1655000, lines))
+    else:
+        shapes.append(_text_box(2, "Title", 838200, 365125, 10515600, 1100000,
+                                f"<a:p>{_pptx_runs(title, 3600, True)}</a:p>", "b"))
+        paragraphs = []
+        for level, text, mark in body:
+            indent = 342900 + level * 457200
+            if mark == "dot":
+                marker = '<a:buFont typeface="Arial"/><a:buChar char="•"/>'
+            elif mark == "number":
+                marker = '<a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod"/>'
+            else:
+                marker, indent = "<a:buNone/>", level * 457200
+            hang = ' indent="-342900"' if mark else ""
+            paragraphs.append(f'<a:p><a:pPr marL="{indent}"{hang} lvl="{level}">'
+                              f'<a:spcBef><a:spcPts val="600"/></a:spcBef>{marker}</a:pPr>'
+                              f'{_pptx_runs(text, 2400 - level * 200)}</a:p>')
+        if paragraphs:
+            shapes.append(_text_box(3, "Content", 838200, 1600000, 10515600, 4576000, "".join(paragraphs)))
+    return (f'{_XML}<p:sld {_PNS}><p:cSld><p:spTree>{_EMPTY_TREE}{"".join(shapes)}</p:spTree></p:cSld>'
+            '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>')
+
+
+_THEME = (
+    f'{_XML}<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Aetheris">'
+    '<a:themeElements><a:clrScheme name="Aetheris">'
+    '<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>'
+    '<a:dk2><a:srgbClr val="1D2130"/></a:dk2><a:lt2><a:srgbClr val="EEF0F7"/></a:lt2>'
+    + "".join(f'<a:accent{n}><a:srgbClr val="{c}"/></a:accent{n}>' for n, c in
+              enumerate(("5B5BF0", "8A4CF2", "18A058", "C77800", "D64545", "2B8CC4"), 1)) +
+    '<a:hlink><a:srgbClr val="5B5BF0"/></a:hlink><a:folHlink><a:srgbClr val="8A4CF2"/></a:folHlink>'
+    '</a:clrScheme><a:fontScheme name="Aetheris">'
+    '<a:majorFont><a:latin typeface="Malgun Gothic"/><a:ea typeface="Malgun Gothic"/><a:cs typeface=""/></a:majorFont>'
+    '<a:minorFont><a:latin typeface="Malgun Gothic"/><a:ea typeface="Malgun Gothic"/><a:cs typeface=""/></a:minorFont>'
+    '</a:fontScheme><a:fmtScheme name="Aetheris"><a:fillStyleLst>'
+    + '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>' * 3 +
+    '</a:fillStyleLst><a:lnStyleLst>'
+    + '<a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>' * 3 +
+    '</a:lnStyleLst><a:effectStyleLst>' + '<a:effectStyle><a:effectLst/></a:effectStyle>' * 3 +
+    '</a:effectStyleLst><a:bgFillStyleLst>' + '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>' * 3 +
+    '</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>')
+
+
+def markdown_to_pptx(text: str) -> bytes:
+    slides = markdown_to_slides(text)
+    if not slides:
+        raise ValueError("no slides found - start each slide with a '# Title' line")
+    files = {}
+    for number, (title, body) in enumerate(slides, 1):
+        cover = number == 1 and len(slides) > 1 and len(body) <= 2 and all(not mark for _, _, mark in body)
+        files[f"ppt/slides/slide{number}.xml"] = _slide_xml(title, body, cover)
+        files[f"ppt/slides/_rels/slide{number}.xml.rels"] = (
+            f'{_XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'<Relationship Id="rId1" Type="{_REL}slideLayout" Target="../slideLayouts/slideLayout1.xml"/>'
+            '</Relationships>')
+    count = len(slides)
+    ct = "application/vnd.openxmlformats-officedocument.presentationml"
+    files["[Content_Types].xml"] = (
+        f'{_XML}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        f'<Override PartName="/ppt/presentation.xml" ContentType="{ct}.presentation.main+xml"/>'
+        f'<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="{ct}.slideMaster+xml"/>'
+        f'<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="{ct}.slideLayout+xml"/>'
+        '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>'
+        + "".join(f'<Override PartName="/ppt/slides/slide{n}.xml" ContentType="{ct}.slide+xml"/>'
+                  for n in range(1, count + 1)) + '</Types>')
+    files["_rels/.rels"] = (
+        f'{_XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f'<Relationship Id="rId1" Type="{_REL}officeDocument" Target="ppt/presentation.xml"/></Relationships>')
+    files["ppt/presentation.xml"] = (
+        f'{_XML}<p:presentation {_PNS} saveSubsetFonts="1">'
+        '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>'
+        '<p:sldIdLst>' + "".join(f'<p:sldId id="{255 + n}" r:id="rId{n + 2}"/>' for n in range(1, count + 1))
+        + f'</p:sldIdLst><p:sldSz cx="{_SLIDE_W}" cy="{_SLIDE_H}"/><p:notesSz cx="6858000" cy="9144000"/>'
+        '</p:presentation>')
+    files["ppt/_rels/presentation.xml.rels"] = (
+        f'{_XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f'<Relationship Id="rId1" Type="{_REL}slideMaster" Target="slideMasters/slideMaster1.xml"/>'
+        f'<Relationship Id="rId2" Type="{_REL}theme" Target="theme/theme1.xml"/>'
+        + "".join(f'<Relationship Id="rId{n + 2}" Type="{_REL}slide" Target="slides/slide{n}.xml"/>'
+                  for n in range(1, count + 1)) + '</Relationships>')
+    files["ppt/slideMasters/slideMaster1.xml"] = (
+        f'{_XML}<p:sldMaster {_PNS}><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef>'
+        f'</p:bg><p:spTree>{_EMPTY_TREE}</p:spTree></p:cSld>'
+        '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" '
+        'accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" '
+        'folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/>'
+        '</p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles>'
+        '</p:sldMaster>')
+    files["ppt/slideMasters/_rels/slideMaster1.xml.rels"] = (
+        f'{_XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f'<Relationship Id="rId1" Type="{_REL}slideLayout" Target="../slideLayouts/slideLayout1.xml"/>'
+        f'<Relationship Id="rId2" Type="{_REL}theme" Target="../theme/theme1.xml"/></Relationships>')
+    files["ppt/slideLayouts/slideLayout1.xml"] = (
+        f'{_XML}<p:sldLayout {_PNS} type="blank" preserve="1"><p:cSld name="Blank"><p:spTree>'
+        f'{_EMPTY_TREE}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>')
+    files["ppt/slideLayouts/_rels/slideLayout1.xml.rels"] = (
+        f'{_XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f'<Relationship Id="rId1" Type="{_REL}slideMaster" Target="../slideMasters/slideMaster1.xml"/>'
+        '</Relationships>')
+    files["ppt/theme/theme1.xml"] = _THEME
+    return _zip(files)
+
+
 def render(path: str, text: str) -> bytes:
     """The bytes to write for `text` saved under `path`'s document type."""
     if path.lower().endswith(".docx"):
         return markdown_to_docx(text)
+    if path.lower().endswith(".pptx"):
+        return markdown_to_pptx(text)
     if path.lower().endswith(".xlsx"):
         rows = text_to_rows(text)
         if not rows:
