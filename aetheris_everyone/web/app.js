@@ -68,6 +68,7 @@ const ICONS = {
   power: '<path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"/>',
   book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/>',
   wand: '<path d="M15 4V2M15 10V8M11 6h2M17 6h2M4 20l11-11"/>',
+  back: '<path d="M19 12H5M11 18l-6-6 6-6"/>',
 };
 
 function icon(name, cls = "i") {
@@ -212,6 +213,7 @@ function closeMenus() {
   $("folderMenu").hidden = true;
   $("safetyMenu").hidden = true;
 }
+
 
 function openFolderMenu() {
   const menu = $("folderMenu");
@@ -374,6 +376,7 @@ function deleteConv(item) {
 
 async function openConversation(id) {
   closeMenus();
+  hideSettings();
   const data = await api("conversation?id=" + encodeURIComponent(id));
   if (!data || data.error) return;
   S.convId = id;
@@ -387,6 +390,7 @@ async function openConversation(id) {
 }
 
 function newChat() {
+  hideSettings();
   S.convId = null;
   S.conv = null;
   S.live = {};
@@ -1338,18 +1342,51 @@ function openSetup(startStep = 0) {
 
 /* -------------------------------------------------------------- settings */
 
+// Settings open in the main area, in place of the chat (like a desktop app's
+// preferences page), with their sections listed down the left.
+const SETTINGS_SECTIONS = [
+  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["about", "info"],
+];
+const SETTINGS_PAGES = {};
+
+function settingsOpen() { return !$("settingsView").hidden; }
+
+function hideSettings() {
+  if (!settingsOpen()) return;
+  $("settingsView").hidden = true;
+  $("settingsView").replaceChildren();
+  for (const id of ["topbar", "messages", "composer"]) $(id).hidden = false;
+  $("openSettings").classList.remove("sel");
+}
+
+function closeSettings() {
+  hideSettings();
+  if (S.convId) openConversation(S.convId); else renderThread();
+}
+
 function openSettings(tab = "general") {
-  const m = modal(null, { big: true });
-  let current = tab;
+  closeMenus();
+  for (const id of ["topbar", "messages", "composer"]) $(id).hidden = true;
+  $("settingsView").hidden = false;
+  $("openSettings").classList.add("sel");
+  if (window.innerWidth <= 900) $("app").classList.add("collapsed");
+  let current = SETTINGS_SECTIONS.some(([id]) => id === tab) ? tab : "general";
   let choosingSearxng = false;
+  const m = { close: closeSettings };
 
   const draw = () => {
-    const tabs = h("div", { class: "tabs" }, ...["general", "ai", "memory", "about"].map((id) =>
-      h("button", { class: current === id ? "sel" : "", text: t(id === "memory" ? "settings.memory_tab" : "settings." + id), onclick: () => { current = id; draw(); } })));
-    const body = current === "general" ? general() : current === "ai" ? ai() : current === "memory" ? memoryTab() : about();
-    m.box.replaceChildren(h("h2", { text: t("settings.title") }), tabs, ...body,
-      h("div", { class: "modal-foot" }, h("div", { class: "right" }, h("button", { class: "btn primary", text: "OK", onclick: () => m.close() }))));
+    if (!settingsOpen()) return;
+    const nav = h("nav", { class: "settings-nav" }, ...SETTINGS_SECTIONS.map(([id, ic]) =>
+      h("button", { class: current === id ? "sel" : "", html: icon(ic) + `<span>${escapeHtml(t("settings.page." + id))}</span>`, onclick: () => { current = id; draw(); } })));
+    const body = (SETTINGS_PAGES[current] || general)();
+    $("settingsView").replaceChildren(
+      h("header", { class: "settings-head" },
+        h("button", { class: "icon-btn", title: t("settings.back"), html: icon("back"), onclick: closeSettings }),
+        h("h1", { text: t("settings.title") })),
+      h("div", { class: "settings-body" }, nav,
+        h("div", { class: "settings-page" }, h("h2", { text: t("settings.page." + current) }), ...body)));
   };
+  window.redrawSettings = draw;
 
   const select = (options, value, onChange) => {
     const node = h("select", { class: "input" }, ...options.map(([v, label]) => h("option", { value: v, text: label })));
@@ -1486,6 +1523,8 @@ function openSettings(tab = "general") {
     ];
   }
 
+  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, about });
+
   function about() {
     return [
       h("div", { class: "hero" }, h("img", { src: "icon.svg", alt: "" }), h("h2", { text: "Aetheris Everyone" }), h("p", { class: "lead", text: t("app.tagline") })),
@@ -1513,12 +1552,15 @@ function openSettings(tab = "general") {
 async function init() {
   setupComposer();
   $("newChat").addEventListener("click", newChat);
-  $("openSettings").addEventListener("click", () => openSettings());
+  $("openSettings").addEventListener("click", () => (settingsOpen() ? closeSettings() : openSettings()));
   $("engineStatus").addEventListener("click", engineClicked);
   $("exportChat").addEventListener("click", exportChat);
   $("toggleSidebar").addEventListener("click", () => $("app").classList.toggle("collapsed"));
   $("folderChip").addEventListener("click", (e) => { e.stopPropagation(); openFolderMenu(); });
   $("safetyChip").addEventListener("click", (e) => { e.stopPropagation(); openSafetyMenu(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && settingsOpen() && !$("modalRoot").children.length) closeSettings();
+  });
   document.addEventListener("click", (e) => {
     if (!e.target.closest(".menu-wrap")) closeMenus();
     const link = e.target.closest("a[data-url]");

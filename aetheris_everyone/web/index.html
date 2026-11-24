@@ -24,6 +24,7 @@
     </aside>
 
     <main id="main">
+      <section id="settingsView" hidden></section>
       <header id="topbar">
         <button id="toggleSidebar" class="icon-btn" aria-label="menu"></button>
         <div id="convTitle"></div>
@@ -47,16 +48,19 @@
       <footer id="composer">
         <div id="attachRow"></div>
         <div class="composer-box">
-          <button id="attachBtn" class="icon-btn"></button>
           <textarea id="input" rows="1"></textarea>
-          <button id="sendBtn" class="send"></button>
+          <div class="composer-tools">
+            <button id="attachBtn" class="icon-btn"></button>
+            <label class="switch small" id="carefulLabel">
+              <input type="checkbox" id="carefulToggle">
+              <span class="track"><span class="thumb"></span></span>
+              <span id="carefulText"></span>
+            </label>
+            <span class="grow"></span>
+            <button id="sendBtn" class="send"></button>
+          </div>
         </div>
         <div class="composer-foot">
-          <label class="switch" id="carefulLabel">
-            <input type="checkbox" id="carefulToggle">
-            <span class="track"><span class="thumb"></span></span>
-            <span id="carefulText"></span>
-          </label>
           <span id="composerHint" class="muted"></span>
         </div>
       </footer>

@@ -228,6 +228,11 @@ const STRINGS = {
     "setup.folder.tip": "처음에는 새 빈 폴더로 시작하는 걸 추천해요.",
 
     "settings.title": "설정",
+    "settings.back": "대화로 돌아가기",
+    "settings.page.general": "일반",
+    "settings.page.ai": "AI 연결",
+    "settings.page.memory": "기억",
+    "settings.page.about": "정보",
     "settings.general": "일반",
     "settings.ai": "AI 연결",
     "settings.about": "정보",
@@ -515,6 +520,11 @@ const STRINGS = {
     "setup.folder.tip": "Starting with a new, empty folder is a good idea.",
 
     "settings.title": "Settings",
+    "settings.back": "Back to chat",
+    "settings.page.general": "General",
+    "settings.page.ai": "AI connection",
+    "settings.page.memory": "Memory",
+    "settings.page.about": "About",
     "settings.general": "General",
     "settings.ai": "AI connection",
     "settings.about": "About",
