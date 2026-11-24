@@ -47,7 +47,7 @@ if sys.platform == "darwin":
         bundle_identifier="io.github.minjun1177.aetheris-everyone",
         info_plist={
             "CFBundleDisplayName": "Aetheris Everyone",
-            "CFBundleShortVersionString": "1.1.0",
+            "CFBundleShortVersionString": "1.2.0",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.productivity",
         },
