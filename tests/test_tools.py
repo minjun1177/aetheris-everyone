@@ -1,4 +1,5 @@
 import os
+import threading
 import unittest
 
 from aetheris_everyone import documents, history, paths, tools
@@ -56,6 +57,28 @@ class FileTools(Sandbox):
             "path": "a.txt", "old_text": "x", "new_text": "y", "replace_all": "false"})
         self.assertEqual(status, "error")
         self.assertIn("2 times", result)
+
+    def test_folders_holding_the_work_or_the_app_data_are_never_carried_off(self):
+        nested = os.path.join(self.work, "project")
+        os.makedirs(nested)
+        ctx = tools.Context(nested, history.ChangeSet("c"), lambda r: "allow", "auto", set(),
+                            threading.Event())
+        for name, args in (("delete", {"path": self.work}),
+                           ("move", {"source": self.work, "destination": os.path.join(self.root, "x")}),
+                           ("delete", {"path": os.path.dirname(paths.data_dir())})):
+            status, result, _ = tools.dispatch(ctx, name, args)
+            self.assertEqual(status, "error", (name, result))
+        self.assertTrue(os.path.isdir(nested))
+        self.assertTrue(os.path.isdir(paths.data_dir()))
+
+    def test_a_folder_is_not_copied_or_moved_into_itself(self):
+        self.write("album/a.jpg", "x")
+        ctx = self.context()
+        for name in ("copy", "move"):
+            status, result, _ = tools.dispatch(ctx, name, {"source": "album", "destination": "album/inner"})
+            self.assertEqual(status, "error", result)
+            self.assertIn("into itself", result)
+        self.assertEqual(os.listdir(os.path.join(self.work, "album")), ["a.jpg"])
 
     def test_aliases_from_small_models(self):
         self.write("a.txt", "x")

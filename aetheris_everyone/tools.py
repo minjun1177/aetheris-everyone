@@ -431,6 +431,21 @@ def create_folder(ctx: Context, path: str) -> str:
     return f"Created folder {ctx.show(target)}."
 
 
+def _refuse_carrying_off(ctx: Context, path: str, what: str) -> None:
+    """Refuse to delete or move a folder the app stands in.
+
+    Deleting a parent of the work folder would take the work with it, and the
+    app's own data folder holds the undo history: moving it away would leave
+    nothing to undo with.
+    """
+    if _within(ctx.folder, path):
+        raise ToolError(f"that folder cannot be {what}: the work folder is inside it")
+    if _within(os.path.realpath(paths.data_dir()), path):
+        raise ToolError(f"that folder cannot be {what}: the assistant's own data is inside it")
+    if path == os.path.realpath(os.path.expanduser("~")):
+        raise ToolError(f"the home folder cannot be {what}")
+
+
 def _destination(ctx: Context, source: str, destination: str) -> str:
     target = ctx.resolve(destination)
     if os.path.isdir(target) or destination.endswith(("/", "\\")):
@@ -444,9 +459,10 @@ def move(ctx: Context, source: str, destination: str) -> str:
     origin = ctx.resolve(source)
     if not os.path.exists(origin):
         raise _missing(ctx, origin)
-    if origin == ctx.folder:
-        raise ToolError("the work folder itself cannot be moved")
+    _refuse_carrying_off(ctx, origin, "moved")
     target = _destination(ctx, origin, destination)
+    if os.path.isdir(origin) and _within(target, origin):
+        raise ToolError("a folder cannot be moved into itself")
     outside = not (ctx.inside(origin) and ctx.inside(target))
     ctx.permit("change", {"tool": "move", "path": origin, "target": target}, outside=outside)
     ctx.ensure_parent(target)
@@ -459,6 +475,8 @@ def copy(ctx: Context, source: str, destination: str) -> str:
     if not os.path.exists(origin):
         raise _missing(ctx, origin)
     target = _destination(ctx, origin, destination)
+    if os.path.isdir(origin) and _within(target, origin):
+        raise ToolError("a folder cannot be copied into itself")
     outside = not ctx.inside(target) or not ctx.inside(origin)
     ctx.permit("change", {"tool": "copy", "path": origin, "target": target}, outside=outside)
     ctx.ensure_parent(target)
@@ -476,8 +494,7 @@ def delete(ctx: Context, path: str) -> str:
     target = ctx.resolve(path)
     if not os.path.lexists(target):
         raise _missing(ctx, target)
-    if target == ctx.folder or target == os.path.realpath(os.path.expanduser("~")):
-        raise ToolError("that folder cannot be deleted")
+    _refuse_carrying_off(ctx, target, "deleted")
     ctx.permit("change", {"tool": "delete", "path": target, "is_dir": os.path.isdir(target)},
                outside=not ctx.inside(target))
     ctx.changes.delete(target)
