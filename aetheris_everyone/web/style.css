@@ -178,6 +178,8 @@ svg.i { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 }
 .menu.wide { width: 340px; }
 .menu.up { top: auto; bottom: calc(100% + 6px); width: 300px; max-height: 60vh; overflow-y: auto; }
+.menu.up.left { right: auto; left: 0; width: 340px; }
+.memories .change-row .name small { display: block; margin-left: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu .menu-label { font-size: 11.5px; font-weight: 700; color: var(--muted); padding: 8px 10px 2px; text-transform: uppercase; letter-spacing: 0.3px; }
 .menu .pad { padding: 10px; font-size: 13px; }
 .menu .model-list button { align-items: center; justify-content: space-between; }

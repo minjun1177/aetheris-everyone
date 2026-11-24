@@ -21,7 +21,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from aetheris_everyone import (__version__, agent, conversations, folder_rules, history, memory,
-                               ollama_setup, paths, providers, settings, system, usage, websearch)
+                               ollama_setup, paths, providers, saved_requests, settings, system,
+                               usage, websearch)
 
 MAX_UPLOAD = 200 * 1024 * 1024
 
@@ -82,6 +83,7 @@ class App:
                 "approvals": self.agent.pending_approvals(),
                 "conversations": conversations.list_all(),
                 "memories": memory.load(),
+                "saved_requests": saved_requests.load(),
                 "jobs": self.bus.last_job, "job_running": bool(self.job_thread
                                                                 and self.job_thread.is_alive()),
                 "default_folder": paths.default_work_folder(),
@@ -504,6 +506,17 @@ class Handler(BaseHTTPRequestHandler):
                     "replies was reverted. Files are back to how they were before it.")})
                 conversations.save(conversation)
         return self._json(result)
+
+    def _post_requests_save(self, body):
+        try:
+            item = saved_requests.save(body.get("text", ""), body.get("title", ""), body.get("id", ""))
+        except ValueError as error:
+            return self._json({"ok": False, "error": str(error)})
+        return self._json({"ok": True, "item": item, "items": saved_requests.load()})
+
+    def _post_requests_delete(self, body):
+        saved_requests.remove(str(body.get("id") or ""))
+        return self._json({"ok": True, "items": saved_requests.load()})
 
     def _post_folder_rules(self, body):
         if not body.get("path"):

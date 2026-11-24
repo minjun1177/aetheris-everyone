@@ -187,6 +187,8 @@ function renderChrome() {
   $("openSettings").innerHTML = icon("gear") + `<span>${t("nav.settings")}</span>`;
   $("toggleSidebar").innerHTML = icon("menu");
   $("attachBtn").innerHTML = icon("clip");
+  $("savedBtn").innerHTML = icon("wand");
+  $("savedBtn").title = t("saved.title");
   $("attachBtn").title = t("composer.attach");
   $("input").placeholder = t("composer.placeholder");
   $("carefulText").textContent = t("composer.careful");
@@ -239,6 +241,53 @@ function closeMenus() {
   $("folderMenu").hidden = true;
   $("safetyMenu").hidden = true;
   $("modelMenu").hidden = true;
+  $("savedMenu").hidden = true;
+}
+
+/* ------------------------------------------------------- saved requests */
+
+function savedRequests() { return (S.state && S.state.saved_requests) || []; }
+
+function openSavedMenu() {
+  const menu = $("savedMenu");
+  const wasOpen = !menu.hidden;
+  closeMenus();
+  if (wasOpen) return;
+  const items = savedRequests();
+  menu.replaceChildren(
+    h("div", { class: "menu-label", text: t("saved.title") }),
+    ...(items.length ? items.map((item) => h("button", { title: item.text, onclick: () => {
+      closeMenus();
+      $("input").value = item.text;
+      autosize();
+      $("input").focus();
+    } }, h("div", {}, h("div", { class: "opt-title", text: item.title }), item.text.trim() !== item.title ? h("div", { class: "opt-desc", text: item.text.slice(0, 90) }) : null)))
+      : [h("div", { class: "muted pad", text: t("saved.empty") })]),
+    h("button", { class: "foot", html: icon("plus") + `<span>${escapeHtml(t("saved.add"))}</span>`, onclick: () => { closeMenus(); editSavedRequest({ text: $("input").value }); } }),
+    items.length ? h("button", { class: "foot", html: icon("gear") + `<span>${escapeHtml(t("saved.manage"))}</span>`, onclick: () => { closeMenus(); openSettings("saved"); } }) : null);
+  menu.hidden = false;
+}
+
+function editSavedRequest(item, after) {
+  const title = h("input", { class: "input", value: item.title || "", placeholder: t("saved.name") });
+  const text = h("textarea", { class: "input rules", rows: "6", placeholder: t("saved.placeholder") });
+  text.value = item.text || "";
+  const m = modal([
+    h("h2", { text: t(item.id ? "saved.edit" : "saved.new") }),
+    h("div", { class: "field" }, h("label", { text: t("saved.name") }), title),
+    h("div", { class: "field" }, h("label", { text: t("saved.text") }), text),
+    h("div", { class: "modal-foot" }, h("div", { class: "right" },
+      h("button", { class: "btn", text: t("confirm.cancel"), onclick: () => m.close() }),
+      h("button", { class: "btn primary", text: t("rules.save"), onclick: async () => {
+        const result = await api("requests/save", { id: item.id || "", title: title.value, text: text.value });
+        if (!result.ok) return toast(errText(result.error));
+        if (S.state) S.state.saved_requests = result.items;
+        m.close();
+        toast(t("saved.saved"));
+        if (after) after();
+      } }))),
+  ]);
+  (item.text ? title : text).focus();
 }
 
 /* ---------------------------------------------------------- model picker */
@@ -1596,7 +1645,7 @@ function openSetup(startStep = 0) {
 // Settings open in the main area, in place of the chat (like a desktop app's
 // preferences page), with their sections listed down the left.
 const SETTINGS_SECTIONS = [
-  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["usage", "table"], ["storage", "trash"], ["about", "info"],
+  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["saved", "wand"], ["usage", "table"], ["storage", "trash"], ["about", "info"],
 ];
 const SETTINGS_PAGES = {};
 
@@ -1794,7 +1843,26 @@ function openSettings(tab = "general") {
     ];
   }
 
-  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, usage: usagePage, storage: storagePage, about });
+  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, saved: savedPage, usage: usagePage, storage: storagePage, about });
+
+  function savedPage() {
+    const items = savedRequests();
+    return [
+      h("p", { class: "lead muted", text: t("saved.lead") }),
+      items.length ? h("div", { class: "memories" }, ...items.map((item) => h("div", { class: "change-row" },
+        h("span", { class: "name", title: item.text }, h("b", { text: item.title }), item.text.trim() !== item.title ? h("small", { text: item.text.slice(0, 80) }) : null),
+        h("span", { class: "row-acts" },
+          h("button", { class: "btn small ghost", html: icon("pencil") + escapeHtml(t("saved.edit")), onclick: () => editSavedRequest(item, draw) }),
+          h("button", { class: "btn small ghost", html: icon("trash") + escapeHtml(t("settings.mem.delete")), onclick: async () => {
+            const result = await api("requests/delete", { id: item.id });
+            if (S.state) S.state.saved_requests = result.items;
+            draw();
+          } })))))
+        : h("p", { class: "muted", text: t("saved.empty") }),
+      h("div", { class: "row", style: "margin-top:12px" },
+        h("button", { class: "btn small", html: icon("plus") + escapeHtml(t("saved.new")), onclick: () => editSavedRequest({}, draw) })),
+    ];
+  }
 
   function storagePage() {
     const s = settingsNow();
@@ -1876,6 +1944,7 @@ async function init() {
   $("engineStatus").addEventListener("click", engineClicked);
   $("exportChat").addEventListener("click", exportChat);
   $("modelChip").addEventListener("click", (e) => { e.stopPropagation(); openModelMenu(); });
+  $("savedBtn").addEventListener("click", (e) => { e.stopPropagation(); openSavedMenu(); });
   $("toggleSidebar").addEventListener("click", () => $("app").classList.toggle("collapsed"));
   $("folderChip").addEventListener("click", (e) => { e.stopPropagation(); openFolderMenu(); });
   $("safetyChip").addEventListener("click", (e) => { e.stopPropagation(); openSafetyMenu(); });

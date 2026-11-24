@@ -96,5 +96,19 @@ class FolderRules(Sandbox):
         self.assertFalse(os.listdir(self.work))                  # nothing is added to the folder
 
 
+
+class SavedRequests(Sandbox):
+    def test_saved_requests_are_kept_edited_and_removed(self):
+        from aetheris_everyone import saved_requests
+        item = saved_requests.save("  다운로드 폴더를 종류별로 정리해줘  ")
+        self.assertEqual(item["title"], "다운로드 폴더를 종류별로 정리해줘")
+        saved_requests.save("새 내용", "주간 정리", item["id"])
+        self.assertEqual(saved_requests.load(), [{"id": item["id"], "title": "주간 정리", "text": "새 내용"}])
+        with self.assertRaises(ValueError):
+            saved_requests.save("   ")
+        saved_requests.remove(item["id"])
+        self.assertEqual(saved_requests.load(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
