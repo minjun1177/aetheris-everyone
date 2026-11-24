@@ -68,14 +68,17 @@ def make_shortcut() -> bool:
     """Put the app on the desktop and in the start menu / app launcher."""
     target = sys.executable
     if sys.platform == "win32":
+        def quoted(text: str) -> str:          # a PowerShell '...' string: ' is doubled
+            return "'" + text.replace("'", "''") + "'"
+
         script = (
             "$s = New-Object -ComObject WScript.Shell;"
             "foreach ($dir in @([Environment]::GetFolderPath('Desktop'), "
             "[Environment]::GetFolderPath('Programs'))) {"
             "$l = $s.CreateShortcut((Join-Path $dir 'Aetheris Everyone.lnk'));"
-            f"$l.TargetPath = '{target}';"
-            f"$l.WorkingDirectory = '{os.path.dirname(target)}';"
-            f"$l.IconLocation = '{target},0';"
+            f"$l.TargetPath = {quoted(target)};"
+            f"$l.WorkingDirectory = {quoted(os.path.dirname(target))};"
+            f"$l.IconLocation = {quoted(target + ',0')};"
             "$l.Save() }")
         result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                                 capture_output=True, creationflags=_NO_WINDOW)

@@ -190,3 +190,22 @@ class InstallerCheck(Sandbox):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Shortcut(unittest.TestCase):
+    def test_a_path_with_an_apostrophe_stays_one_powershell_string(self):
+        from unittest import mock
+        from aetheris_everyone import system
+        seen = {}
+
+        def run(command, **kwargs):
+            seen["script"] = command[-1]
+            return mock.Mock(returncode=0)
+
+        exe = "C:\\Users\\O'Neil\\Apps\\AetherisEveryone.exe"
+        with mock.patch.object(system.sys, "platform", "win32"), \
+                mock.patch.object(system.sys, "executable", exe), \
+                mock.patch.object(system.subprocess, "run", run):
+            self.assertTrue(system.make_shortcut())
+        self.assertIn("$l.TargetPath = 'C:\\Users\\O''Neil\\Apps\\AetherisEveryone.exe';", seen["script"])
+        self.assertNotIn("O'Neil", seen["script"])
