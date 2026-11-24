@@ -272,3 +272,60 @@ class Pictures(Sandbox):
         self.assertIn({"kind": "notice", "code": "image_too_big"}, conversation["ui"])
         self.assertIn("too large to show you", conversation["messages"][0]["content"])
         self.assertNotIn("images", conversation["messages"][0])
+
+
+class BusyService(Sandbox):
+    def turn(self, behaviours):
+        """`behaviours`: per request, an exception to raise or a list of events to stream."""
+        settings.update({"work_folder": self.work, "safety": "balanced"})
+        fake = FakeProvider([], native=False)
+        requests = list(behaviours)
+
+        class Broken(FakeStream):
+            def __iter__(self):
+                for item in self.events:
+                    if isinstance(item, Exception):
+                        raise item
+                    yield item
+
+        def stream(*a, **k):
+            item = requests.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return Broken(item)
+
+        fake.stream = stream
+        events, done = [], threading.Event()
+
+        def emit(event):
+            events.append(event)
+            if event["type"] == "turn_end":
+                done.set()
+
+        original, base = providers.make, providers.RETRY_BASE_SECONDS
+        providers.make = lambda *a, **k: fake
+        providers.RETRY_BASE_SECONDS = 0.01
+        try:
+            conversation_id = agent.Agent(emit).start("", "hello", [])
+            self.assertTrue(done.wait(10))
+        finally:
+            providers.make, providers.RETRY_BASE_SECONDS = original, base
+        return conversations.load(conversation_id), events
+
+    def test_a_busy_service_is_asked_again_before_anything_arrives(self):
+        conversation, events = self.turn([
+            providers.ProviderError("rate_limit", "slow down"),
+            [providers.ProviderError("server", "overloaded")],
+            [{"text": "Hello!"}, {"done": True}]])
+        self.assertEqual([e["attempt"] for e in events if e["type"] == "retry"], [1, 2])
+        self.assertEqual([i["kind"] for i in conversation["ui"]], ["user", "assistant"])
+
+    def test_a_started_reply_is_not_asked_again(self):
+        conversation, events = self.turn([[{"text": "Hel"}, providers.ProviderError("network", "reset")]])
+        self.assertFalse([e for e in events if e["type"] == "retry"])
+        self.assertEqual(conversation["ui"][-1]["kind"], "error")
+
+    def test_a_wrong_key_is_not_asked_again(self):
+        conversation, events = self.turn([providers.ProviderError("bad_key")])
+        self.assertFalse([e for e in events if e["type"] == "retry"])
+        self.assertEqual(conversation["ui"][-1]["code"], "bad_key")

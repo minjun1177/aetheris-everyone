@@ -1,5 +1,6 @@
 """Each provider's streaming format, turned into the one shape of event - from canned wire data."""
 
+import io
 import json
 import unittest
 
@@ -155,3 +156,25 @@ class Hosts(Sandbox):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Retrying(unittest.TestCase):
+    def test_only_passing_trouble_is_asked_again(self):
+        busy = providers.ProviderError("rate_limit")
+        self.assertEqual(providers.retry_delay(busy, 0), providers.RETRY_BASE_SECONDS)
+        self.assertEqual(providers.retry_delay(busy, 1), providers.RETRY_BASE_SECONDS * 2)
+        self.assertIsNone(providers.retry_delay(busy, providers.RETRIES))
+        for code in ("bad_key", "model_missing", "ollama_down", "other"):
+            self.assertIsNone(providers.retry_delay(providers.ProviderError(code), 0), code)
+        self.assertEqual(providers.retry_delay(providers.ProviderError("server", "", 7.0), 0), 7.0)
+        self.assertIsNone(providers.retry_delay(providers.ProviderError("rate_limit", "", 3600.0), 0))
+
+    def test_retry_after_header_is_read(self):
+        import email.message
+        import urllib.error
+        headers = email.message.Message()
+        headers["Retry-After"] = "12"
+        error = urllib.error.HTTPError("https://x", 429, "Too Many", headers, io.BytesIO(b"{}"))
+        converted = providers._error_from_http(error, "gemini")
+        self.assertEqual((converted.code, converted.retry_after), ("rate_limit", 12.0))
+        self.assertIsNone(providers.retry_after({}))

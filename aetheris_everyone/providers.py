@@ -36,10 +36,51 @@ class ProviderError(Exception):
     """`code`: ollama_down | bad_key | no_key | no_model | model_missing |
     rate_limit | network | server | other."""
 
-    def __init__(self, code: str, detail: str = ""):
+    def __init__(self, code: str, detail: str = "", retry_after: float | None = None):
         super().__init__(detail or code)
         self.code = code
         self.detail = detail
+        self.retry_after = retry_after
+
+
+# A busy or briefly failing service is asked again, with a wait that doubles - but
+# only before anything of the reply has arrived, so nothing is shown twice.
+RETRIES = 3
+RETRY_BASE_SECONDS = 2.0
+RETRY_AFTER_CEILING = 60.0       # a service asking for a longer wait is not waited on
+_RETRYABLE = ("rate_limit", "server", "network")
+
+
+def retry_after(headers) -> float | None:
+    """Seconds a `Retry-After` header asks for (a number or an HTTP date), or None."""
+    try:
+        value = str(headers.get("Retry-After") or "").strip()
+    except AttributeError:
+        return None
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        from datetime import datetime, timezone
+        from email.utils import parsedate_to_datetime
+        when = parsedate_to_datetime(value)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+
+def retry_delay(error: Exception, attempt: int) -> float | None:
+    """How long to wait before asking again after `attempt` retries, or None to give up."""
+    if attempt >= RETRIES or not isinstance(error, ProviderError) or error.code not in _RETRYABLE:
+        return None
+    if error.retry_after is not None:
+        return error.retry_after if error.retry_after <= RETRY_AFTER_CEILING else None
+    return RETRY_BASE_SECONDS * (2 ** attempt)
 
 
 def ssl_context():
@@ -77,14 +118,15 @@ def _error_from_http(error: urllib.error.HTTPError, provider: str) -> ProviderEr
         pass
     detail = (detail or str(error)).strip()[:400]
     status = error.code
+    wait = retry_after(getattr(error, "headers", None) or {})
     if status in (401, 403):
         return ProviderError("bad_key", detail)
     if status == 404 or "not found" in detail.lower():
         return ProviderError("model_missing", detail)
     if status == 429:
-        return ProviderError("rate_limit", detail)
+        return ProviderError("rate_limit", detail, wait)
     if status >= 500:
-        return ProviderError("server", detail)
+        return ProviderError("server", detail, wait)
     if provider == "gemini" and status == 400 and "api key" in detail.lower():
         return ProviderError("bad_key", detail)
     return ProviderError("other", f"HTTP {status}: {detail}")

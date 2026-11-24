@@ -364,39 +364,69 @@ class Agent:
         stream_filter = toolcalls.StreamFilter()
         raw, thinking, calls = [], [], []
         truncated = False
-        stream = provider.stream(messages, tools=tools.schemas(commands) if native else None,
-                                 think=careful)
-        self._stream = stream
-        if self.cancel.is_set():
-            stream.close()
-        try:
-            for event in stream:
-                if self.cancel.is_set():
-                    break
-                if "text" in event:
-                    raw.append(event["text"])
-                    for kind, piece in stream_filter.feed(event["text"]):
-                        if kind == "think":
-                            thinking.append(piece)
+        attempt = 0
+        while True:
+            try:
+                stream = provider.stream(messages, tools=tools.schemas(commands) if native else None,
+                                         think=careful)
+            except providers.ProviderError as error:
+                if not self._wait_to_retry(cid, reply_id, error, attempt):
+                    if self.cancel.is_set():
+                        return "", [], "", False
+                    raise
+                attempt += 1
+                continue
+            self._stream = stream
+            if self.cancel.is_set():
+                stream.close()
+            try:
+                for event in stream:
+                    if self.cancel.is_set():
+                        break
+                    if "text" in event:
+                        raw.append(event["text"])
+                        for kind, piece in stream_filter.feed(event["text"]):
+                            if kind == "think":
+                                thinking.append(piece)
+                            self.emit({"type": "delta", "conversation": cid, "id": reply_id,
+                                       "kind": "thinking" if kind == "think" else "text",
+                                       "text": piece})
+                    elif "thinking" in event:
+                        thinking.append(event["thinking"])
                         self.emit({"type": "delta", "conversation": cid, "id": reply_id,
-                                   "kind": "thinking" if kind == "think" else "text", "text": piece})
-                elif "thinking" in event:
-                    thinking.append(event["thinking"])
-                    self.emit({"type": "delta", "conversation": cid, "id": reply_id,
-                               "kind": "thinking", "text": event["thinking"]})
-                elif "tool_call" in event:
-                    calls.append(event["tool_call"])
-                elif event.get("done"):
-                    truncated = bool(event.get("truncated"))
-        finally:
-            stream.close()
-            self._stream = None
+                                   "kind": "thinking", "text": event["thinking"]})
+                    elif "tool_call" in event:
+                        calls.append(event["tool_call"])
+                    elif event.get("done"):
+                        truncated = bool(event.get("truncated"))
+                break
+            except providers.ProviderError as error:
+                # Asked again only while nothing has arrived: a started reply has been shown.
+                if raw or thinking or calls or not self._wait_to_retry(cid, reply_id, error, attempt):
+                    if self.cancel.is_set() and not (raw or thinking or calls):
+                        return "", [], "", False
+                    raise
+                attempt += 1
+            finally:
+                stream.close()
+                self._stream = None
         for kind, piece in stream_filter.close():
             if kind == "think":
                 thinking.append(piece)
             self.emit({"type": "delta", "conversation": cid, "id": reply_id,
                        "kind": "thinking" if kind == "think" else "text", "text": piece})
         return "".join(raw), calls, "".join(thinking), truncated
+
+
+    def _wait_to_retry(self, cid: str, reply_id: str, error: Exception, attempt: int) -> bool:
+        """Wait before asking a busy service again; False when it should not be asked again."""
+        seconds = providers.retry_delay(error, attempt)
+        if seconds is None or self.cancel.is_set():
+            return False
+        self.emit({"type": "retry", "conversation": cid, "id": reply_id, "code": error.code,
+                   "seconds": max(1, round(seconds)), "attempt": attempt + 1,
+                   "of": providers.RETRIES})
+        return not self.cancel.wait(seconds)
 
 
 def _has_tool_tag(text: str) -> bool:

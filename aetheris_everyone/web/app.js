@@ -736,6 +736,15 @@ function handleEvent(event) {
       paintLive(live);
       break;
     }
+    case "retry": {
+      if (!isHere(event)) break;
+      const live = liveReply(event.id);
+      if (!live.el.isConnected) threadNode().append(live.el);
+      live.waiting.hidden = false;
+      live.waiting.lastElementChild.textContent = t("msg.retrying", { seconds: event.seconds, attempt: event.attempt, of: event.of });
+      scrollDown();
+      break;
+    }
     case "reply_empty":
       if (!isHere(event)) break;
       if (S.live[event.id]) { S.live[event.id].el.remove(); delete S.live[event.id]; }

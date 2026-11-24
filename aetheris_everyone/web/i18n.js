@@ -51,6 +51,7 @@ const STRINGS = {
 
     "msg.you": "나",
     "msg.thinking": "생각하는 중…",
+    "msg.retrying": "AI 서비스가 바빠서 {seconds}초 뒤에 다시 물어볼게요 ({attempt}/{of})…",
     "msg.thoughts": "생각 과정 보기",
     "msg.copy": "복사",
     "msg.copied": "복사했어요",
@@ -324,6 +325,7 @@ const STRINGS = {
 
     "msg.you": "You",
     "msg.thinking": "Thinking…",
+    "msg.retrying": "The AI service is busy. Asking again in {seconds} s ({attempt}/{of})…",
     "msg.thoughts": "Show reasoning",
     "msg.copy": "Copy",
     "msg.copied": "Copied",
