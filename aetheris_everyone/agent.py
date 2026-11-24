@@ -30,6 +30,7 @@ CUT_OFF_NOTE = (
     "append=true for each following part, in order, until it is complete. For .docx or .xlsx, "
     "which cannot be appended to, make the document shorter or split it into several files.")
 KEEP_RECENT = 8
+KEEP_PICTURES = 4                # pictures still attached in what is sent; older ones are dropped
 
 
 class Busy(Exception):
@@ -77,6 +78,21 @@ def fit(messages: list, budget: int) -> list:
     if out and out[0]["role"] == "assistant":
         out.insert(0, {"role": "user", "content": "(earlier conversation was shortened)"})
     return out
+
+
+def keep_recent_pictures(messages: list, keep: int = KEEP_PICTURES) -> list:
+    """Only the newest `keep` pictures stay attached: every request sends them all again."""
+    count = 0
+    for message in reversed(messages):
+        images = message.get("images") or []
+        if not images:
+            continue
+        room = max(0, keep - count)
+        if len(images) > room:
+            message["images"] = images[len(images) - room:] if room else []
+            message["content"] += "\n(a picture shown here earlier is no longer attached)"
+        count += len(message["images"])
+    return messages
 
 
 def _summary(name: str, arguments: dict, folder: str = "") -> dict:
@@ -214,7 +230,8 @@ class Agent:
             native = provider.native_tools()
             if images:
                 if provider.sees_images():
-                    shown = [p for p in images if providers.image_source(p)]
+                    limit = providers.image_limit(provider.name)
+                    shown = [p for p in images if providers.image_source(p, limit)]
                     too_big = [p for p in images if p not in shown]
                     if shown:
                         message["images"] = shown
@@ -233,7 +250,9 @@ class Agent:
             ctx = tools.Context(folder, changes, lambda request: self._ask(cid, request),
                                 settings.get("safety"), self._granted.setdefault(cid, set()),
                                 self.cancel, extra_readable=files + images,
-                                allow_commands=bool(settings.get("allow_commands")))
+                                allow_commands=bool(settings.get("allow_commands")),
+                                sees_images=provider.sees_images(),
+                                image_limit=providers.image_limit(provider.name))
             self._loop(conversation, provider, native, careful, ctx)
         except providers.ProviderError as error:
             self._ui(conversation, {"kind": "error", "code": error.code, "detail": error.detail})
@@ -273,7 +292,7 @@ class Agent:
             if self.cancel.is_set():
                 return
             history_now = [{"role": "system", "content": system}] + \
-                fit(conversation["messages"], max(2000, budget))
+                keep_recent_pictures(fit(conversation["messages"], max(2000, budget)))
             reply_id = uuid.uuid4().hex[:10]
             self.emit({"type": "reply_start", "conversation": cid, "id": reply_id})
             raw, native_calls, thinking, truncated = self._stream_reply(
@@ -356,11 +375,16 @@ class Agent:
                                                      "or answer the user."), name
                 else:
                     status, result, real = tools.dispatch(ctx, name, arguments)
+                shown, ctx.shown = ctx.shown, []
                 item = {"kind": "tool", "id": call_id, "name": real, "args": summary,
                         "status": status, "result": result[:1500]}
+                if shown and status == "ok":
+                    item["image"] = shown[0]
                 self._ui(conversation, item)
-                conversation["messages"].append(
-                    {"role": "user", "content": f"[Tool Result for '{real}']:\n{result}"})
+                message = {"role": "user", "content": f"[Tool Result for '{real}']:\n{result}"}
+                if shown and status == "ok":
+                    message["images"] = shown
+                conversation["messages"].append(message)
                 refusals = refusals + 1 if status == "denied" else 0
             conversations.save(conversation)
             if refusals >= MAX_REFUSALS:

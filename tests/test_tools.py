@@ -365,3 +365,38 @@ class DamagedDocuments(Sandbox):
         status, result, _ = tools.dispatch(ctx, "search_text", {"text": "budget"})
         self.assertEqual(status, "ok", result)              # the broken file is skipped
         self.assertIn("notes.txt", result)
+
+
+class LookingAtPictures(Sandbox):
+    def picture(self, name="cat.png"):
+        path = os.path.join(self.work, name)
+        with open(path, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n fake")
+        return path
+
+    def test_a_model_that_sees_gets_the_picture(self):
+        path = self.picture()
+        ctx = self.context()
+        ctx.sees_images = True
+        status, result, _ = tools.dispatch(ctx, "view_image", {"path": "cat.png"})
+        self.assertEqual(status, "ok", result)
+        self.assertEqual(ctx.shown, [os.path.realpath(path)])
+        self.assertEqual(self.asked, [])                  # inside the folder: a read, not asked
+
+    def test_a_blind_model_is_told_instead(self):
+        self.picture()
+        ctx = self.context()
+        status, result, _ = tools.dispatch(ctx, "view_image", {"path": "cat.png"})
+        self.assertEqual(status, "error")
+        self.assertIn("cannot see pictures", result)
+        self.assertEqual(ctx.shown, [])
+
+    def test_not_a_picture_and_too_large(self):
+        self.write("notes.txt", "x")
+        ctx = self.context()
+        ctx.sees_images, ctx.image_limit = True, 5
+        self.assertEqual(tools.dispatch(ctx, "view_image", {"path": "notes.txt"})[0], "error")
+        self.picture("big.jpg")
+        status, result, _ = tools.dispatch(ctx, "view_image", {"path": "big.jpg"})
+        self.assertIn("too large", result)
+        self.assertEqual(ctx.shown, [])

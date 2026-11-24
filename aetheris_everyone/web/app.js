@@ -648,7 +648,7 @@ const TOOL_ICONS = {
   list_folder: "folder", find_files: "search", search_text: "search", read_file: "eye",
   write_file: "doc", edit_file: "pencil", create_folder: "folderPlus", move: "arrow",
   copy: "copy", delete: "trash", run_command: "terminal", web_search: "globe", read_webpage: "globe",
-  remember: "book", forget: "x",
+  remember: "book", forget: "x", view_image: "image",
 };
 
 function toolArg(args) {
@@ -674,8 +674,9 @@ function toolCard(item) {
     h("div", { class: "tool-body" },
       item.args && item.args.reason ? h("div", { class: "reason", text: item.args.reason }) : null,
       item.args && item.args.command ? h("pre", { text: "$ " + item.args.command }) : null,
+      item.image ? h("img", { class: "tool-thumb", alt: "", src: `/api/file?t=${encodeURIComponent(TOKEN)}&path=${encodeURIComponent(item.image)}` }) : null,
       item.result ? h("pre", { text: item.result }) : null));
-  if (status === "error") card.classList.add("open");
+  if (status === "error" || item.image) card.classList.add("open");
   return card;
 }
 

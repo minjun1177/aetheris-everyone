@@ -28,6 +28,7 @@ from aetheris_everyone import settings
 TIMEOUT = 300
 MAX_OUTPUT_TOKENS = 8192
 MAX_IMAGE_BYTES = 4_500_000
+LOCAL_IMAGE_BYTES = 20_000_000   # Ollama shrinks pictures itself; only the cloud APIs cap them
 
 LABELS = {"ollama": "Ollama", "anthropic": "Claude (Anthropic)",
           "openai": "ChatGPT (OpenAI)", "gemini": "Gemini (Google)"}
@@ -251,7 +252,11 @@ def is_image(path: str) -> bool:
 SMALL_SUFFIX = ".small.jpg"      # the window's reduced copy of a large attached photo
 
 
-def image_source(path: str) -> str:
+def image_limit(provider_name: str) -> int:
+    return LOCAL_IMAGE_BYTES if provider_name == "ollama" else MAX_IMAGE_BYTES
+
+
+def image_source(path: str, limit: int = MAX_IMAGE_BYTES) -> str:
     """The file to show the model for the picture at `path`, or "" if none fits.
 
     A phone photo is often larger than the services accept; the window then
@@ -259,16 +264,16 @@ def image_source(path: str) -> str:
     """
     small = path + SMALL_SUFFIX
     try:
-        if os.path.isfile(small) and os.path.getsize(small) <= MAX_IMAGE_BYTES:
+        if os.path.isfile(small) and os.path.getsize(small) <= limit:
             return small
-        return path if os.path.getsize(path) <= MAX_IMAGE_BYTES else ""
+        return path if os.path.getsize(path) <= limit else ""
     except OSError:
         return ""
 
 
-def _image_data(path: str):
+def _image_data(path: str, limit: int = MAX_IMAGE_BYTES):
     """(mime, base64) or None for an image too big or gone."""
-    source = image_source(path)
+    source = image_source(path, limit)
     if not source:
         return None
     try:
@@ -279,8 +284,8 @@ def _image_data(path: str):
         return None
 
 
-def _images(message: dict) -> list:
-    return [data for data in (_image_data(p) for p in message.get("images") or []) if data]
+def _images(message: dict, limit: int = MAX_IMAGE_BYTES) -> list:
+    return [data for data in (_image_data(p, limit) for p in message.get("images") or []) if data]
 
 
 def _split_system(messages: list):
@@ -375,7 +380,7 @@ class OllamaProvider(Provider):
         out = []
         for m in messages:
             entry = {"role": m["role"], "content": m["content"]}
-            pictures = _images(m)
+            pictures = _images(m, LOCAL_IMAGE_BYTES)
             if pictures:
                 entry["images"] = [data for _, data in pictures]
             out.append(entry)

@@ -383,3 +383,12 @@ class Quoting(Sandbox):
         sent = fake.seen[0][-1]["content"]
         self.assertIn('"""\nΣ x_i\n"""', sent)
         self.assertTrue(sent.endswith("What does this mean?"))
+
+
+class PicturesInHistory(unittest.TestCase):
+    def test_only_the_newest_pictures_stay_attached(self):
+        messages = [{"role": "user", "content": f"m{n}", "images": [f"p{n}a", f"p{n}b"]} for n in range(4)]
+        kept = agent.keep_recent_pictures([dict(m) for m in messages], keep=3)
+        self.assertEqual([m["images"] for m in kept], [[], [], ["p2b"], ["p3a", "p3b"]])
+        self.assertIn("no longer attached", kept[0]["content"])
+        self.assertNotIn("no longer attached", kept[3]["content"])

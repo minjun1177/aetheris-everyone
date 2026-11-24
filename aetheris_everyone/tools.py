@@ -29,7 +29,7 @@ import sys
 import threading
 import time
 
-from aetheris_everyone import documents, history, memory, paths, settings, websearch
+from aetheris_everyone import documents, history, memory, paths, providers, settings, websearch
 
 RESULT_LIMIT = 12_000
 READ_LINES = 400
@@ -49,7 +49,8 @@ class Denied(Exception):
 class Context:
     def __init__(self, folder: str, changes: history.ChangeSet, ask, safety: str,
                  granted: set, cancelled: threading.Event, extra_readable=(),
-                 allow_commands: bool = False):
+                 allow_commands: bool = False, sees_images: bool = False,
+                 image_limit: int = providers.MAX_IMAGE_BYTES):
         self.folder = os.path.realpath(folder)
         self.changes = changes
         self.ask = ask                    # ask(request: dict) -> "allow" | "always" | "deny"
@@ -58,6 +59,9 @@ class Context:
         self.cancelled = cancelled
         self.extra_readable = {os.path.realpath(p) for p in extra_readable}
         self.allow_commands = allow_commands
+        self.sees_images = sees_images    # whether the model can be shown a picture at all
+        self.image_limit = image_limit
+        self.shown: list = []             # pictures view_image picked; the agent attaches them
 
     # -- paths -----------------------------------------------------------
     def resolve(self, path) -> str:
@@ -297,8 +301,7 @@ def read_file(ctx: Context, path: str, start_line: int = 1, max_lines: int = REA
         kind = "document text"
     elif lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic")):
         return (f"{ctx.show(target)} is a picture ({_size(os.path.getsize(target))}). "
-                "Pictures cannot be read as text; ask the user to attach it to a message "
-                "if you need to see it.")
+                "Pictures cannot be read as text; use view_image to look at it.")
     elif lower.endswith(".hwp"):
         raise ToolError(".hwp files cannot be read; ask the user to save it as .hwpx or .pdf")
     else:
@@ -506,6 +509,25 @@ def delete(ctx: Context, path: str) -> str:
     return f"Deleted {ctx.show(target)} (it can be restored with Undo)."
 
 
+def view_image(ctx: Context, path: str) -> str:
+    target = ctx.resolve(path)
+    if not os.path.isfile(target):
+        raise _missing(ctx, target, "no picture")
+    if not providers.is_image(target):
+        raise ToolError("only .png, .jpg, .jpeg, .gif and .webp pictures can be looked at")
+    if not ctx.sees_images:
+        raise ToolError("the AI model in use cannot see pictures. Tell the user that looking at "
+                        "pictures needs a model that can see (such as gemma4) or a cloud AI.")
+    outside = not ctx.inside(target) and target not in ctx.extra_readable
+    ctx.permit("read", {"tool": "view_image", "path": target}, outside=outside)
+    if not providers.image_source(target, ctx.image_limit):
+        raise ToolError(f"{ctx.show(target)} is too large to look at "
+                        f"({_size(os.path.getsize(target))})")
+    ctx.shown.append(target)
+    return (f"{ctx.show(target)} ({_size(os.path.getsize(target))}) is attached to this result "
+            "as a picture. Describe or use what you see in it.")
+
+
 def _decode_output(raw: bytes) -> str:
     try:
         return raw.decode("utf-8")
@@ -706,6 +728,12 @@ TOOLS = [
                     "start_line": _p("integer", "First line to show (default 1)."),
                     "max_lines": _p("integer", "How many lines to show (default 400).")},
      "required": ["path"]},
+    {"name": "view_image", "category": "read", "fn": view_image,
+     "description": "Look at a picture file (.png, .jpg, .gif, .webp): it is shown to you, so "
+                    "you can say what is in it, read text in it, or sort pictures by what they "
+                    "show. One picture per call.",
+     "properties": {"path": _p("string", "The picture to look at.")},
+     "required": ["path"]},
     {"name": "write_file", "category": "change", "fn": write_file,
      "description": "Create a file, or replace one completely. A path ending in .docx becomes a "
                     "real Word document (write the content as markdown: # headings, - lists, "
@@ -787,6 +815,8 @@ ALIASES = {"read": "read_file", "open_file": "read_file", "cat": "read_file",
            "shell": "run_command", "search": "web_search", "search_web": "web_search",
            "fetch": "read_webpage", "browse": "read_webpage", "fetch_url": "read_webpage",
            "grep": "search_text", "find": "find_files", "glob": "find_files",
+           "look_at_image": "view_image", "see_image": "view_image", "open_image": "view_image",
+           "view_picture": "view_image", "read_image": "view_image",
            "save_memory": "remember", "write_memory": "remember", "memorize": "remember",
            "delete_memory": "forget", "forget_memory": "forget"}
 
