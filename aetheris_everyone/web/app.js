@@ -175,6 +175,7 @@ function renderChrome() {
   renderSendButton();
   renderTitle();
   renderBanner();
+  renderModelChip();
 }
 
 function currentFolder() {
@@ -212,8 +213,68 @@ function renderSafetyChip() {
 function closeMenus() {
   $("folderMenu").hidden = true;
   $("safetyMenu").hidden = true;
+  $("modelMenu").hidden = true;
 }
 
+/* ---------------------------------------------------------- model picker */
+
+const MODEL_CACHE = {};        // provider -> [model names], read once per window
+
+function shortModel(name) {
+  return String(name || "").replace(/^hf\.co\/[^/]+\//, "").replace(/:latest$/, "");
+}
+
+function renderModelChip() {
+  const s = settingsNow();
+  const name = (S.state && S.state.model) || "";
+  $("modelChip").innerHTML = `<span>${escapeHtml(shortModel(name) || t("status.none"))}</span>` + icon("down");
+  $("modelChip").title = `${t("model.pick")}: ${(S.state && S.state.provider_label) || ""} · ${name}`;
+  $("modelChip").hidden = !s.setup_done;
+}
+
+async function modelsOf(provider) {
+  if (MODEL_CACHE[provider]) return MODEL_CACHE[provider];
+  const result = provider === "ollama" ? await api("ollama/status") : await api("provider/test", { provider });
+  const models = (result && result.models) || [];
+  if (models.length) MODEL_CACHE[provider] = models;
+  return models;
+}
+
+async function openModelMenu() {
+  const menu = $("modelMenu");
+  const wasOpen = !menu.hidden;
+  closeMenus();
+  if (wasOpen) return;
+  const s = settingsNow();
+  const keys = (S.state && S.state.keys) || {};
+  const providers = ["ollama", ...["anthropic", "openai", "gemini"].filter((p) => keys[p])];
+  const pick = async (provider, model) => {
+    closeMenus();
+    const result = await api("provider/use", { provider, model });
+    if (!result.ok) return toast(errText(result.error));
+    await refreshState();
+    toast(t("model.switched", { model: shortModel(model) }), 1800);
+  };
+  const body = h("div", { class: "model-list" }, h("div", { class: "muted pad", text: t("model.loading") }));
+  menu.replaceChildren(body, h("button", { class: "foot", html: icon("gear") + `<span>${escapeHtml(t("model.settings"))}</span>`,
+    onclick: () => { closeMenus(); openSettings("ai"); } }));
+  menu.hidden = false;
+  const sections = await Promise.all(providers.map(async (provider) => [provider, await modelsOf(provider)]));
+  if (menu.hidden) return;
+  const nodes = [];
+  for (const [provider, models] of sections) {
+    if (!models.length) continue;
+    nodes.push(h("div", { class: "menu-label", text: PROVIDER_LABELS[provider] || provider }));
+    for (const model of models) {
+      const current = provider === s.provider && model === S.state.model;
+      nodes.push(h("button", { class: current ? "sel" : "", title: model, onclick: () => pick(provider, model) },
+        h("span", { class: "opt-title", text: shortModel(model) }), current ? h("span", { html: icon("check") }) : null));
+    }
+  }
+  body.replaceChildren(...(nodes.length ? nodes : [h("div", { class: "muted pad", text: t("model.none") })]));
+}
+
+const PROVIDER_LABELS = { ollama: "Ollama", anthropic: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", gemini: "Gemini (Google)" };
 
 function openFolderMenu() {
   const menu = $("folderMenu");
@@ -800,6 +861,7 @@ function handleEvent(event) {
       break;
     }
     case "settings_changed":
+      for (const key of Object.keys(MODEL_CACHE)) delete MODEL_CACHE[key];   // a model pulled, a key added
       refreshState().then(pollOllama);
       break;
     case "pull":
@@ -1555,6 +1617,7 @@ async function init() {
   $("openSettings").addEventListener("click", () => (settingsOpen() ? closeSettings() : openSettings()));
   $("engineStatus").addEventListener("click", engineClicked);
   $("exportChat").addEventListener("click", exportChat);
+  $("modelChip").addEventListener("click", (e) => { e.stopPropagation(); openModelMenu(); });
   $("toggleSidebar").addEventListener("click", () => $("app").classList.toggle("collapsed"));
   $("folderChip").addEventListener("click", (e) => { e.stopPropagation(); openFolderMenu(); });
   $("safetyChip").addEventListener("click", (e) => { e.stopPropagation(); openSafetyMenu(); });

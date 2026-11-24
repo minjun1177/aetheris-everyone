@@ -14,6 +14,11 @@ const STRINGS = {
     "nav.earlier": "이전",
 
     "top.folder": "작업 폴더",
+    "model.pick": "AI 모델 고르기",
+    "model.loading": "모델 목록을 읽는 중…",
+    "model.none": "쓸 수 있는 모델이 없어요. AI 연결 설정에서 확인해 주세요.",
+    "model.settings": "AI 연결 설정…",
+    "model.switched": "{model}(으)로 바꿨어요",
     "top.export": "대화를 파일로 저장",
     "top.export.ok": "작업 폴더에 저장했어요: {name}",
     "top.folder.open": "파일 탐색기에서 열기",
@@ -306,6 +311,11 @@ const STRINGS = {
     "nav.earlier": "Earlier",
 
     "top.folder": "Work folder",
+    "model.pick": "Choose the AI model",
+    "model.loading": "Reading the model list…",
+    "model.none": "No model is available. Check the AI connection settings.",
+    "model.settings": "AI connection settings…",
+    "model.switched": "Switched to {model}",
     "top.export": "Save this chat as a file",
     "top.export.ok": "Saved in the work folder: {name}",
     "top.folder.open": "Open in file manager",
