@@ -39,7 +39,8 @@
 | "Read the meeting notes and tell me only the decisions" | Reads Word · Excel · PowerPoint · PDF · Hangul (HWPX) and summarises |
 | "Make a weekly report template as a Word file" | Creates a real `.docx` file |
 | "Make a household budget spreadsheet for this month" | Creates a real `.xlsx` file |
-| "Find good-value laptops and put them in a table" | Web search → read pages → summarise |
+| "Find good-value laptops and put them in a table" | Web search → read pages (and PDFs on the web) → summarise |
+| "Remember that I like reports with a summary first" | Remembers it for later chats, after asking (**Settings → Memory**) |
 | (drop a photo) "Describe this picture" | Looks at the picture (with models that can see) |
 | "Solve $x^2-5x+6=0$" | Formulas in replies are typeset (LaTeX via KaTeX) |
 
@@ -48,7 +49,8 @@
 - **It asks before changing things** — three safety levels (Always ask / Balanced / Do everything).
   - **Balanced (default):** work inside the work folder happens right away; anything outside it is asked first.
   - **Do everything:** still asks before **changing anything outside the work folder** and before **running a program**.
-- **Running programs is off by default.** It can be turned on in **Settings → General**; even then every command is shown and asked first, at every safety level.
+- **Running programs is off by default.** It can be turned on in **Settings → General**; even then every command is shown and asked first, at every safety level — "Allow for this chat" is never offered for a program.
+- **Allowing a look outside the work folder is not allowing changes there** — "Allow for this chat" on a read outside the folder still asks before anything there is changed.
 - **Every change can be undone** — every file the AI creates, edits, moves or deletes is listed in a card under the reply, and **[Undo this]** puts it all back. Deleting never really deletes: the file is kept aside. If you edited a file yourself in the meantime, or added files to a folder the AI copied, it tells you before overwriting — and a forced undo keeps your own files.
 - **It can run entirely on your computer** — with the free local AI (Ollama), chats and files never leave your machine.
 
@@ -115,6 +117,9 @@ Pushing a `v*` tag makes GitHub Actions build the Windows · macOS · Linux apps
 - When permission is needed a yellow **permission card** appears, with what and why and a preview of the change: **[Allow] [Allow for this chat] [Deny]**.
 - The green card under a reply lets you **open / show in folder / undo** each changed file.
 - **Careful mode** makes it work as "plan → do → check".
+- The ⬇ button next to the chat title **saves the chat as a Markdown file** in its work folder.
+- A large phone photo is shrunk to a copy the AI can see; the original is kept as it is.
+- When the AI service is busy (rate limit) or briefly down, it **asks again by itself** (up to three times) before showing an error.
 - The 📁 button at the top changes **this chat's** work folder; the 🛡 button changes the safety level. Chats are kept on the left.
 - Korean / English, light / dark themes.
 
@@ -132,6 +137,7 @@ Everything below is set in **Settings** in the app; the environment variables ar
 | Web search engine | `auto` | `auto` = DuckDuckGo / Bing (via `ddgs`). `searxng` = **your own SearXNG** only; queries go nowhere else. |
 | SearXNG address | — | e.g. `http://192.168.0.10:8080`. The instance must list `json` under `search: formats:` in its `settings.yml`. Checked with **[Check connection]** before it is saved. |
 | Memory length | `16384` | Ollama context size (`num_ctx`). |
+| Remember things about me | on | **Settings → Memory**. The AI may save short facts (your name, how you like documents) for later chats, asking each time. Saved facts are listed there and can be deleted. |
 
 ---
 
@@ -164,12 +170,13 @@ aetheris-everyone/
 │   ├── server.py        127.0.0.1-only HTTP + live events (SSE); token and Host checks
 │   ├── agent.py         one turn: stream → tool calls → permission → results → repeat
 │   ├── toolcalls.py     repairs broken tool calls from small models (from Aetheris)
-│   ├── tools.py         13 tools and their safety checks (paths, safety level, undo record)
+│   ├── tools.py         15 tools and their safety checks (paths, safety level, undo record)
+│   ├── memory.py        what the AI remembers between chats (asked first, listed in Settings)
 │   ├── history.py       undo without git: originals kept aside, conflict detection
 │   ├── providers.py     Ollama · Claude · ChatGPT · Gemini (urllib only)
 │   ├── ollama_setup.py  find / start / install Ollama (checksum-verified), model download progress
 │   ├── documents.py     read docx/xlsx/pptx/hwpx/pdf, write docx/xlsx
-│   ├── websearch.py     web search (ddgs, DuckDuckGo, Bing or SearXNG) and page text; blocks the local network
+│   ├── websearch.py     web search (ddgs, DuckDuckGo, Bing or SearXNG), page and PDF text; blocks the local network
 │   ├── settings.py      settings, and API keys in the system password store
 │   ├── prompts.py       what the model is told
 │   └── web/             the window (HTML/CSS/JS, no build step)
@@ -204,4 +211,4 @@ aetheris-everyone/
 | Undo | git commits (`/undo`) | **Its own change history, no git** · one button · conflict detection |
 | Permission | Terminal y/n | **Permission cards with a preview**, three safety levels |
 | Documents | Mostly code | **Creates Word · Excel**, reads PDF · PPT · HWPX, CSV that opens correctly in Korean Excel |
-| Carried over | | Tool-call repair engine for small local models, native and text tool protocols, repeated-call and refusal detection, Ollama · Anthropic · OpenAI · Gemini connections |
+| Carried over | | Tool-call repair engine for small local models, native and text tool protocols, repeated-call and refusal detection, Ollama · Anthropic · OpenAI · Gemini connections, retrying a busy service, memory between chats, saving a chat as Markdown |
