@@ -425,3 +425,12 @@ class LongChats(Sandbox):
     def test_a_short_chat_is_not_summarised(self):
         messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
         self.assertEqual(agent.summarise_point(messages, 2000), 0)
+
+
+class PromptEnd(unittest.TestCase):
+    def test_the_rules_small_models_break_most_come_last(self):
+        from aetheris_everyone import prompts
+        text = prompts.system_prompt("/tmp", native=False, careful=False, user_text="보고서 만들어줘")
+        tail = text[-400:]
+        self.assertIn("make it now", tail)
+        self.assertTrue(tail.endswith("must be in Korean (한국어)."))

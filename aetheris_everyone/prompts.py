@@ -36,6 +36,10 @@ For anything current or factual you are unsure of, use web_search and then read_
 - Every file change you make can be undone by the person with one click, so do not ask \
 "shall I?" for ordinary, clearly requested changes. Do ask first when the request is unclear, \
 or before deleting or reorganising many files.
+- A request to write or make something (a report, a letter, a slide deck, a table) is not \
+unclear just because the content is not spelled out: choose sensible content yourself and make \
+it now; the person can ask for changes afterwards. Never ask the same question twice - when the \
+person says to go ahead or leaves it to you, do it.
 {commands}
 - Word documents: write_file to a .docx path with markdown content. Excel: write_file to a \
 .xlsx path with CSV or a markdown table. PowerPoint: write_file to a .pptx path with markdown, \
@@ -148,8 +152,11 @@ def system_prompt(folder: str, native: bool, careful: bool, user_text: str = "",
         text += _NATIVE_PROTOCOL
     else:
         text += _TEXT_PROTOCOL.format(catalog=tools.text_protocol_catalog(commands))
+    # Small models follow the end of the prompt most: the two rules they break most go last.
+    text += ("\n\nIMPORTANT: When the person asks you to make or write something, make it now with "
+             "your tools - pick the content yourself instead of asking what to put in it.")
     language = language_of(user_text)
     if language:
         # Small models drift into English after reading English tool results.
-        text += f"\n\nIMPORTANT: The person writes in {language}. Every reply you write must be in {language}."
+        text += f" The person writes in {language}. Every reply you write must be in {language}."
     return text
