@@ -18,6 +18,7 @@ Categories decide the asking:
 import fnmatch
 import locale
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -360,8 +361,21 @@ def write_file(ctx: Context, path: str, content: str = "", append: bool = False)
     return f"{verb} {ctx.show(target)} ({_size(os.path.getsize(target))})."
 
 
-def _loose(text: str) -> str:
-    return "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").split("\n"))
+def _loose_pattern(old_text: str):
+    """`old_text` as a pattern that ignores line endings and spaces at line ends.
+
+    Only the matched span is replaced, so the rest of the file keeps its own
+    line endings and spacing.
+    """
+    lines = old_text.replace("\r\n", "\n").split("\n")
+    return re.compile(r"[ \t]*\r?\n".join(re.escape(line.rstrip()) for line in lines))
+
+
+def _newlines_like(text: str, new_text: str) -> str:
+    """`new_text` with the line endings of a file that uses Windows ones throughout."""
+    if "\r\n" in text and text.count("\r\n") == text.count("\n"):
+        return new_text.replace("\r\n", "\n").replace("\n", "\r\n")
+    return new_text
 
 
 def edit_file(ctx: Context, path: str, old_text: str, new_text: str = "",
@@ -374,15 +388,15 @@ def edit_file(ctx: Context, path: str, old_text: str, new_text: str = "",
                         "whole new version with write_file (as .docx / .xlsx)")
     if not old_text:
         raise ToolError("old_text is required: the exact text to replace")
+    replace_all = str(replace_all).lower() in ("true", "1", "yes")
     text, encoding = read_text(target)
+    new_text = _newlines_like(text, new_text or "")
     count = text.count(old_text)
-    if count == 0:
+    pattern = None
+    if count == 0 and old_text.strip():
         # Line endings and trailing spaces are what small models get wrong most.
-        loose_text, loose_old = _loose(text), _loose(old_text)
-        if loose_old and loose_text.count(loose_old):
-            text, old_text = loose_text, loose_old
-            new_text = _loose(new_text or "")
-            count = text.count(old_text)
+        pattern = _loose_pattern(old_text)
+        count = len(pattern.findall(text))
     if count == 0:
         hint = ""
         if len(text) <= 4000:
@@ -395,8 +409,11 @@ def edit_file(ctx: Context, path: str, old_text: str, new_text: str = "",
                         "it is unique, or set replace_all to true")
     ctx.permit("change", {"tool": "edit_file", "path": target, "old": old_text[:1500],
                           "new": (new_text or "")[:1500]}, outside=not ctx.inside(target))
-    updated = text.replace(old_text, new_text or "") if replace_all \
-        else text.replace(old_text, new_text or "", 1)
+    limit = 0 if replace_all else 1
+    if pattern is not None:
+        updated = pattern.sub(lambda _match: new_text, text, count=limit)
+    else:
+        updated = text.replace(old_text, new_text, -1 if replace_all else 1)
     ctx.changes.before_write(target)
     _write_text(target, updated, encoding)
     ctx.changes.after_write(target)

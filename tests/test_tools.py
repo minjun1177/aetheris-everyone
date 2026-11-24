@@ -32,6 +32,31 @@ class FileTools(Sandbox):
         self.assertEqual(status, "error")
         self.assertIn("hello", result)
 
+    def test_edit_keeps_windows_line_endings_and_the_rest_of_the_file(self):
+        path = os.path.join(self.work, "memo.txt")
+        with open(path, "wb") as f:
+            f.write(b"title  \r\none\r\ntwo\r\nend   \r\n")
+        status, result, _ = tools.dispatch(self.context(), "edit_file", {
+            "path": "memo.txt", "old_text": "one\ntwo", "new_text": "first\nsecond"})
+        self.assertEqual(status, "ok", result)
+        with open(path, "rb") as f:
+            # only the edited lines change; the other lines keep CRLF and their spaces
+            self.assertEqual(f.read(), b"title  \r\nfirst\r\nsecond\r\nend   \r\n")
+
+    def test_edit_ignores_trailing_spaces_only_where_it_matches(self):
+        self.write("a.txt", "keep   \nold line   \nnext\n")
+        status, result, _ = tools.dispatch(self.context(), "edit_file", {
+            "path": "a.txt", "old_text": "old line\nnext", "new_text": "new line\nnext"})
+        self.assertEqual(status, "ok", result)
+        self.assertEqual(self.read("a.txt"), "keep   \nnew line\nnext\n")
+
+    def test_replace_all_given_as_text_false_stays_false(self):
+        self.write("a.txt", "x x")
+        status, result, _ = tools.dispatch(self.context(), "edit_file", {
+            "path": "a.txt", "old_text": "x", "new_text": "y", "replace_all": "false"})
+        self.assertEqual(status, "error")
+        self.assertIn("2 times", result)
+
     def test_aliases_from_small_models(self):
         self.write("a.txt", "x")
         status, result, name = tools.dispatch(self.context(), "cat", {"filepath": "a.txt"})
