@@ -221,3 +221,23 @@ class LargePhotos(ServerCase):
         result = self.upload(b"evil", **{"X-Small-For": urllib.parse.quote(outside)})
         self.assertFalse(result["ok"])
         self.assertFalse(os.path.exists(outside + ".small.jpg"))
+
+
+class CutOffUpload(ServerCase):
+    def test_an_upload_that_stops_early_is_not_kept(self):
+        import socket
+        from aetheris_everyone import paths
+        with socket.create_connection(("127.0.0.1", self.app.port), timeout=5) as sock:
+            sock.sendall((f"POST /api/upload HTTP/1.1\r\nHost: 127.0.0.1:{self.app.port}\r\n"
+                          f"X-Token: {self.app.token}\r\nX-Filename: report.pdf\r\n"
+                          "Content-Length: 1000\r\n\r\n").encode() + b"only part")
+            sock.shutdown(socket.SHUT_WR)               # the window went away mid-upload
+            answer = b""
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                answer += data
+        self.assertIn(b'"incomplete"', answer)
+        kept = [name for _, _, files in os.walk(paths.sub("attachments")) for name in files]
+        self.assertEqual(kept, [])

@@ -282,13 +282,24 @@ class Handler(BaseHTTPRequestHandler):
             folder = paths.sub("attachments", time.strftime("%Y%m%d"), uuid.uuid4().hex[:8])
             target = os.path.join(folder, name)
         remaining = length
-        with open(target, "wb") as out:
-            while remaining:
-                chunk = self.rfile.read(min(remaining, 1 << 20))
-                if not chunk:
-                    break
-                out.write(chunk)
-                remaining -= len(chunk)
+        try:
+            with open(target, "wb") as out:
+                while remaining:
+                    chunk = self.rfile.read(min(remaining, 1 << 20))
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    remaining -= len(chunk)
+        except OSError:
+            remaining = remaining or 1
+        if remaining:
+            # Cut off on the way (window closed, connection dropped): half a file is no file.
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+            self.close_connection = True
+            return self._json({"ok": False, "error": "incomplete"}, 400)
         return self._json({"ok": True, "path": target, "name": name,
                            "image": providers.is_image(target)})
 
