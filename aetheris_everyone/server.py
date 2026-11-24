@@ -436,6 +436,21 @@ class Handler(BaseHTTPRequestHandler):
                                - attachment_folders(*_all_conversations()))
         return self._json({"ok": True, "conversations": conversations.list_all()})
 
+    def _post_conversation_rewind(self, body):
+        """Take back the last request, to edit it or ask again; files are left as they are."""
+        if self.app.agent.busy:
+            return self._json({"ok": False, "error": "busy"})
+        conversation = conversations.load(body.get("id", ""))
+        request = conversations.rewind(conversation) if conversation else None
+        if request is None:
+            return self._json({"ok": False, "error": "other"})
+        conversations.save(conversation)
+        attachments = [a for a in request.get("attachments") or []
+                       if isinstance(a, dict) and os.path.isfile(str(a.get("path", "")))]
+        text = request.get("text") or ""
+        return self._json({"ok": True, "text": "" if text == "(see attached)" else text,
+                           "quote": request.get("quote", ""), "attachments": attachments})
+
     def _post_conversation_export(self, body):
         """Save the chat as a Markdown file in its work folder, for keeping or sharing."""
         conversation = conversations.load(body.get("id", ""))

@@ -147,6 +147,37 @@ def export_name(conversation: dict, folder: str) -> str:
     return candidate
 
 
+def _from_person(message: dict) -> bool:
+    content = message.get("content") or ""
+    return message.get("role") == "user" and not content.startswith(("[Tool Result", "[System]"))
+
+
+def rewind(conversation: dict) -> dict | None:
+    """Take back the last request and everything after it. Returns that request's ui item.
+
+    The files stay as they are; the change cards of the taken-back turns are kept
+    so they can still be undone, and the model is told the files were changed.
+    """
+    ui = conversation.get("ui", [])
+    at = next((i for i in range(len(ui) - 1, -1, -1) if ui[i].get("kind") == "user"), None)
+    if at is None:
+        return None
+    request, later = ui[at], ui[at + 1:]
+    kept_cards = [item for item in later if item.get("kind") == "changes"]
+    conversation["ui"] = ui[:at] + kept_cards
+    messages = conversation.get("messages", [])
+    cut = next((i for i in range(len(messages) - 1, -1, -1) if _from_person(messages[i])), None)
+    if cut is not None:
+        conversation["messages"] = messages[:cut]
+    changed = [f.get("path", "") for card in kept_cards if not card.get("undone")
+               for f in card.get("files") or []]
+    if changed:
+        conversation["messages"].append({"role": "user", "content": (
+            "[System] The person took back their last request and your answer to it, but files "
+            "changed while doing it are still changed: " + ", ".join(changed[:30]))})
+    return request
+
+
 def title_from(text: str) -> str:
     line = " ".join(text.strip().split())
     return (line[:40] + "…") if len(line) > 40 else (line or "New chat")

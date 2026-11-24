@@ -553,7 +553,34 @@ function renderThread() {
   if (busyHere && !Object.keys(S.live).length) {
     thread.append(liveReply("__waiting__").el);
   }
+  markLastRequest();
   scrollDown(true);
+}
+
+/* Edit or retry the last request: the chat goes back to before it (files stay as they are). */
+function markLastRequest() {
+  for (const old of document.querySelectorAll("#messages .user-actions")) old.remove();
+  if (S.busy || !S.convId) return;
+  const requests = document.querySelectorAll("#messages .msg.user");
+  const last = requests[requests.length - 1];
+  if (!last) return;
+  last.append(h("div", { class: "user-actions" },
+    h("button", { html: icon("pencil") + escapeHtml(t("msg.edit")), onclick: () => retakeLast(false) }),
+    h("button", { html: icon("undo") + escapeHtml(t("msg.retry")), onclick: () => retakeLast(true) })));
+}
+
+async function retakeLast(resend) {
+  if (S.busy) return toast(t("err.busy"));
+  const result = await api("conversation/rewind", { id: S.convId });
+  if (!result.ok) return toast(errText(result.error));
+  await openConversation(S.convId);
+  $("input").value = result.text || "";
+  setQuote(result.quote || "");
+  S.attachments = (result.attachments || []).map((a) => ({ name: a.name, path: a.path, uploading: false,
+    preview: a.image ? `/api/file?t=${encodeURIComponent(TOKEN)}&path=${encodeURIComponent(a.path)}` : null }));
+  renderAttachments();
+  autosize();
+  if (resend) send(); else $("input").focus();
 }
 
 function renderItem(item) {
@@ -725,6 +752,7 @@ function errorCard(item) {
   if (code === "ollama_down") acts.push(h("button", { class: "btn small primary", html: icon("power") + escapeHtml(t("err.ollama_down.act")), onclick: startEngine }));
   if (code === "model_missing" || code === "no_model") acts.push(h("button", { class: "btn small primary", html: icon("download") + escapeHtml(t("err.model_missing.act")), onclick: () => openSetup(settingsNow().provider === "ollama" ? 3 : 2) }));
   if (code === "bad_key" || code === "no_key") acts.push(h("button", { class: "btn small primary", html: icon("key") + escapeHtml(t("err.key.act")), onclick: () => openSetup(2) }));
+  if (!["bad_key", "no_key", "no_model"].includes(code)) acts.push(h("button", { class: "btn small", html: icon("undo") + escapeHtml(t("err.retry")), onclick: () => retakeLast(true) }));
   const message = errText(code);
   return h("div", { class: "error-card" }, h("span", { html: icon("alert") }),
     h("div", {}, h("div", { text: message }),
@@ -816,6 +844,7 @@ function handleEvent(event) {
   switch (event.type) {
     case "turn_start":
       S.busy = event.conversation;
+      for (const old of document.querySelectorAll("#messages .user-actions")) old.remove();
       if (isHere(event)) { if (!$("messages").querySelector(".thread")) threadNode(); }
       renderSendButton();
       refreshConvSoon();
@@ -830,6 +859,7 @@ function handleEvent(event) {
       }
       renderSendButton();
       refreshConvSoon(true);
+      if (isHere(event)) markLastRequest();
       break;
     case "reply_start":
       if (!isHere(event)) break;

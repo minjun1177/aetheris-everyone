@@ -271,3 +271,36 @@ class SavingAChat(ServerCase):
                          "`write_file` budget.xlsx (ok)", "## Aetheris", "I made **budget.xlsx**.",
                          "**Files changed:**", "- created: "):
             self.assertIn(expected, text)
+
+
+class TakingBack(ServerCase):
+    def test_the_last_request_is_taken_back_and_its_undo_card_kept(self):
+        from aetheris_everyone import conversations
+        conversation = conversations.new(self.work)
+        conversation["ui"] = [
+            {"kind": "user", "text": "first"}, {"kind": "assistant", "text": "ok"},
+            {"kind": "user", "text": "make a.txt", "quote": "that part"},
+            {"kind": "tool", "name": "write_file", "status": "ok"},
+            {"kind": "changes", "change_id": "c1", "undone": False,
+             "files": [{"kind": "created", "path": "/w/a.txt"}]},
+            {"kind": "assistant", "text": "made it"}]
+        conversation["messages"] = [
+            {"role": "user", "content": "first"}, {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "About this part...\n\nmake a.txt"},
+            {"role": "assistant", "content": "<tool_call>..."},
+            {"role": "user", "content": "[Tool Result for 'write_file']:\nCreated a.txt."},
+            {"role": "assistant", "content": "made it"}]
+        conversations.save(conversation)
+        status, raw = self.call("/api/conversation/rewind", {"id": conversation["id"]})
+        body = json.loads(raw)
+        self.assertEqual((body["ok"], body["text"], body["quote"]), (True, "make a.txt", "that part"))
+        saved = conversations.load(conversation["id"])
+        self.assertEqual([i["kind"] for i in saved["ui"]], ["user", "assistant", "changes"])
+        self.assertEqual([m["content"][:5] for m in saved["messages"]], ["first", "ok", "[Syst"])
+        self.assertIn("/w/a.txt", saved["messages"][-1]["content"])
+        self.app.agent.busy = conversation["id"]
+        try:
+            status, raw = self.call("/api/conversation/rewind", {"id": conversation["id"]})
+            self.assertEqual(json.loads(raw)["error"], "busy")
+        finally:
+            self.app.agent.busy = None
