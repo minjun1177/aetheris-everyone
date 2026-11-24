@@ -205,13 +205,32 @@ def is_image(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in _MIME
 
 
+SMALL_SUFFIX = ".small.jpg"      # the window's reduced copy of a large attached photo
+
+
+def image_source(path: str) -> str:
+    """The file to show the model for the picture at `path`, or "" if none fits.
+
+    A phone photo is often larger than the services accept; the window then
+    uploads a reduced copy beside it, and that copy is what the model sees.
+    """
+    small = path + SMALL_SUFFIX
+    try:
+        if os.path.isfile(small) and os.path.getsize(small) <= MAX_IMAGE_BYTES:
+            return small
+        return path if os.path.getsize(path) <= MAX_IMAGE_BYTES else ""
+    except OSError:
+        return ""
+
+
 def _image_data(path: str):
     """(mime, base64) or None for an image too big or gone."""
+    source = image_source(path)
+    if not source:
+        return None
     try:
-        if os.path.getsize(path) > MAX_IMAGE_BYTES:
-            return None
-        with open(path, "rb") as f:
-            return _MIME.get(os.path.splitext(path)[1].lower(), "image/png"), \
+        with open(source, "rb") as f:
+            return _MIME.get(os.path.splitext(source)[1].lower(), "image/png"), \
                 base64.b64encode(f.read()).decode("ascii")
     except OSError:
         return None

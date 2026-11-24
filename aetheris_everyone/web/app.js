@@ -890,6 +890,29 @@ function renderAttachments() {
   renderSendButton();
 }
 
+// Photos larger than this get a reduced copy for the AI: the services refuse big
+// pictures, and a phone photo is often 5-10 MB. The original stays for file work.
+const SHRINK_OVER = 3_000_000;
+
+async function shrinkImage(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type || "") || file.size <= SHRINK_OVER) return null;
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const g = canvas.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    g.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    if (bitmap.close) bitmap.close();
+    return await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+  } catch (_) {
+    return null;                     // the server tells the AI the picture was too large
+  }
+}
+
 async function addFiles(fileList) {
   for (const file of Array.from(fileList || [])) {
     const entry = { name: file.name || "image.png", uploading: true, preview: null, path: "" };
@@ -904,6 +927,14 @@ async function addFiles(fileList) {
       });
       const result = await response.json();
       if (!result.ok) throw new Error(result.error);
+      const small = await shrinkImage(file);
+      if (small) {
+        await fetch("/api/upload", {
+          method: "POST",
+          headers: { "X-Token": TOKEN, "X-Small-For": encodeURIComponent(result.path) },
+          body: small,
+        }).catch(() => null);
+      }
       entry.path = result.path;
       entry.uploading = false;
     } catch (error) {

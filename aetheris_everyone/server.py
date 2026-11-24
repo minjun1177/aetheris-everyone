@@ -264,11 +264,23 @@ class Handler(BaseHTTPRequestHandler):
     def _upload(self):
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > MAX_UPLOAD:
+            self.close_connection = True          # the unread body must not become a request
             return self._json({"ok": False, "error": "too_large"}, 413)
-        name = urllib.parse.unquote(self.headers.get("X-Filename") or "file")
-        name = os.path.basename(name.replace("\\", "/")).strip() or "file"
-        folder = paths.sub("attachments", time.strftime("%Y%m%d"), uuid.uuid4().hex[:8])
-        target = os.path.join(folder, name)
+        small_for = urllib.parse.unquote(self.headers.get("X-Small-For") or "")
+        if small_for:
+            # The reduced copy of a large photo uploaded just before, kept beside it.
+            original = os.path.realpath(small_for)
+            if not providers.is_image(original) or not os.path.isfile(original) or \
+                    os.path.dirname(os.path.dirname(os.path.dirname(original))) != _attachments_root():
+                self.close_connection = True
+                return self._json({"ok": False, "error": "other"}, 400)
+            target = original + providers.SMALL_SUFFIX
+            name = os.path.basename(target)
+        else:
+            name = urllib.parse.unquote(self.headers.get("X-Filename") or "file")
+            name = os.path.basename(name.replace("\\", "/")).strip() or "file"
+            folder = paths.sub("attachments", time.strftime("%Y%m%d"), uuid.uuid4().hex[:8])
+            target = os.path.join(folder, name)
         remaining = length
         with open(target, "wb") as out:
             while remaining:

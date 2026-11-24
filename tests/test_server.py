@@ -1,6 +1,7 @@
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from aetheris_everyone import server
@@ -187,3 +188,36 @@ class EditsDuringATurn(ServerCase):
         conversations.save(conversation)               # what the turn does when it ends
         self.assertEqual(conversations.load(conversation["id"])["title"], "Budget")
         self.assertEqual(conversations.load(conversation["id"])["folder"], self.work)
+
+
+class LargePhotos(ServerCase):
+    def upload(self, body, **headers):
+        request = urllib.request.Request(self.base + "/api/upload", data=body, method="POST")
+        request.add_header("X-Token", self.app.token)
+        for key, value in headers.items():
+            request.add_header(key, value)
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read())
+
+    def test_the_reduced_copy_is_what_the_model_sees(self):
+        from aetheris_everyone import providers
+        original = self.upload(b"x" * (providers.MAX_IMAGE_BYTES + 1), **{"X-Filename": "big.jpg"})
+        self.assertTrue(original["ok"])
+        self.assertEqual(providers.image_source(original["path"]), "")       # too big as it is
+        small = self.upload(b"small-jpeg", **{"X-Small-For": urllib.parse.quote(original["path"])})
+        self.assertTrue(small["ok"])
+        self.assertEqual(providers.image_source(original["path"]),
+                         original["path"] + providers.SMALL_SUFFIX)
+        with open(original["path"], "rb") as f:
+            self.assertEqual(len(f.read()), providers.MAX_IMAGE_BYTES + 1)  # the original stays
+
+    def test_a_reduced_copy_goes_only_beside_an_uploaded_picture(self):
+        outside = os.path.join(self.work, "mine.jpg")
+        with open(outside, "wb") as f:
+            f.write(b"jpg")
+        result = self.upload(b"evil", **{"X-Small-For": urllib.parse.quote(outside)})
+        self.assertFalse(result["ok"])
+        self.assertFalse(os.path.exists(outside + ".small.jpg"))

@@ -249,3 +249,26 @@ class Closing(Sandbox):
             providers.make = original
         kinds = [i["kind"] for i in conversations.load(conversation_id)["ui"]]
         self.assertIn("changes", kinds)
+
+
+class Pictures(Sandbox):
+    def test_a_picture_too_large_is_reported_not_silently_dropped(self):
+        settings.update({"work_folder": self.work, "safety": "balanced"})
+        photo = os.path.join(self.work, "huge.jpg")
+        with open(photo, "wb") as f:
+            f.write(b"x" * (providers.MAX_IMAGE_BYTES + 1))
+        fake = FakeProvider([[{"text": "I cannot see it."}, {"done": True}]], native=False)
+        fake.sees_images = lambda: True
+        original = providers.make
+        providers.make = lambda *a, **k: fake
+        done = threading.Event()
+        bot = agent.Agent(lambda e: done.set() if e["type"] == "turn_end" else None)
+        try:
+            conversation_id = bot.start("", "what is this?", [photo])
+            self.assertTrue(done.wait(10))
+        finally:
+            providers.make = original
+        conversation = conversations.load(conversation_id)
+        self.assertIn({"kind": "notice", "code": "image_too_big"}, conversation["ui"])
+        self.assertIn("too large to show you", conversation["messages"][0]["content"])
+        self.assertNotIn("images", conversation["messages"][0])

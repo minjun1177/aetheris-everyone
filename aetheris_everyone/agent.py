@@ -208,7 +208,14 @@ class Agent:
             native = provider.native_tools()
             if images:
                 if provider.sees_images():
-                    message["images"] = images
+                    shown = [p for p in images if providers.image_source(p)]
+                    too_big = [p for p in images if p not in shown]
+                    if shown:
+                        message["images"] = shown
+                    if too_big:
+                        self._ui(conversation, {"kind": "notice", "code": "image_too_big"})
+                        message["content"] += "\n\n" + "\n".join(
+                            f"[Attached picture too large to show you: {p}]" for p in too_big)
                 else:
                     self._ui(conversation, {"kind": "notice", "code": "no_vision"})
                     message["content"] += "\n\n" + "\n".join(
