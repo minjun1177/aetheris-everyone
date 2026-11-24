@@ -169,6 +169,7 @@ class Agent:
                 folder = settings.get("work_folder") or ""
                 conversation = conversations.new(folder)
                 conversation["title"] = conversations.title_from(text)
+                conversation["title_auto"] = True     # replaced by a model-written one after the turn
                 conversations.save(conversation)
             self.busy = conversation["id"]
             self.current = conversation
@@ -287,6 +288,7 @@ class Agent:
                                 sees_images=provider.sees_images(),
                                 image_limit=providers.image_limit(provider.name))
             self._loop(conversation, provider, native, careful, ctx)
+            self._name_chat(conversation, provider)
         except providers.ProviderError as error:
             self._ui(conversation, {"kind": "error", "code": error.code, "detail": error.detail})
         except Exception as error:          # never leave the window spinning
@@ -530,6 +532,45 @@ class Agent:
         conversation["summary"] = {"text": text[:6000], "upto": upto}
         self._ui(conversation, {"kind": "notice", "code": "summarised"})
         conversations.save(conversation)
+
+    def _name_chat(self, conversation: dict, provider) -> None:
+        """After a new chat's first answer, a short title from the model (not the first words)."""
+        if not conversation.get("title_auto") or self.cancel.is_set():
+            return
+        conversation["title_auto"] = False
+        if not settings.get("auto_title"):
+            return
+        request = next((i.get("text", "") for i in conversation["ui"] if i.get("kind") == "user"), "")
+        answer = next((i.get("text", "") for i in conversation["ui"] if i.get("kind") == "assistant"
+                       and i.get("text")), "")
+        if not request or not answer:
+            return
+        language = prompts.language_of(request)
+        ask = [{"role": "system", "content": (
+            "Give this chat a short title of 2 to 6 words that says what it is about"
+            + (f", in {language}" if language else ", in the language of the request")
+            + ". Reply with the title only: no quotes, no full stop, no explanation.")},
+               {"role": "user", "content": f"Request: {request[:800]}\n\nAnswer: {answer[:800]}"}]
+        pieces = []
+        try:
+            stream = provider.stream(ask, tools=None, think=False)
+            self._stream = stream
+            for event in stream:
+                if self.cancel.is_set():
+                    return
+                if "text" in event:
+                    pieces.append(event["text"])
+                elif "usage" in event:
+                    self._last_usage = event["usage"]
+        except Exception:                  # a title is a nicety: it never ends a turn with an error
+            return
+        finally:
+            self._stream = None
+        self._count_usage(conversation, provider)
+        title = toolcalls.strip_thinking("".join(pieces)).strip().splitlines()
+        title = title[0].strip().strip("\"'“”‘’「」#*.").strip() if title else ""
+        if 1 < len(title) <= 60:
+            conversation["title"] = title
 
     def _count_usage(self, conversation: dict, provider) -> dict | None:
         """Add the last request's tokens to the chat and the monthly ledger, and tell the window."""

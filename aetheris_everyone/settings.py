@@ -31,6 +31,7 @@ DEFAULTS = {
     "memory": True,              # whether the AI may remember things between chats
     "history_days": 90,          # how long undo copies are kept; 0 = until emptied by hand
     "notify": True,              # a desktop notification when a turn ends or asks, unseen
+    "auto_title": True,          # the model names a new chat after its first answer
     "search_engine": "auto",     # auto | searxng
     "searxng_url": "",           # base address of the person's own SearXNG
 }
@@ -86,6 +87,7 @@ def load() -> dict:
             merged["allow_commands"] = merged["allow_commands"] is True
             merged["memory"] = merged["memory"] is True
             merged["notify"] = merged["notify"] is True
+            merged["auto_title"] = merged["auto_title"] is True
             _cache = merged
         return dict(_cache, models=dict(_cache["models"]))
 
@@ -110,7 +112,7 @@ def update(changes: dict) -> dict:
                     current[key] = max(2048, min(262144, int(value)))
                 except (TypeError, ValueError):
                     pass
-            elif key in ("allow_commands", "memory", "notify"):
+            elif key in ("allow_commands", "memory", "notify", "auto_title"):
                 current[key] = value is True
             elif key == "history_days":
                 try:

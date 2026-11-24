@@ -45,7 +45,8 @@ class FakeProvider:
 
 class AgentTurn(Sandbox):
     def run_turn(self, replies, native, text="do it", answer="allow", **options):
-        settings.update({"work_folder": self.work, "safety": "balanced", **options})
+        # Scripted replies cover the turn only: the extra title request is tested on its own.
+        settings.update({"work_folder": self.work, "safety": "balanced", "auto_title": False, **options})
         fake = FakeProvider(replies, native)
         original = providers.make
         providers.make = lambda *a, **k: fake
@@ -277,7 +278,7 @@ class Pictures(Sandbox):
 class BusyService(Sandbox):
     def turn(self, behaviours):
         """`behaviours`: per request, an exception to raise or a list of events to stream."""
-        settings.update({"work_folder": self.work, "safety": "balanced"})
+        settings.update({"work_folder": self.work, "safety": "balanced", "auto_title": False})
         fake = FakeProvider([], native=False)
         requests = list(behaviours)
 
@@ -434,3 +435,50 @@ class PromptEnd(unittest.TestCase):
         tail = text[-400:]
         self.assertIn("make it now", tail)
         self.assertTrue(tail.endswith("must be in Korean (한국어)."))
+
+
+class Naming(Sandbox):
+    def turn(self, replies, conversation_id=""):
+        settings.update({"work_folder": self.work, "safety": "balanced"})
+        fake = FakeProvider(replies, native=False)
+        original = providers.make
+        providers.make = lambda *a, **k: fake
+        done = threading.Event()
+        try:
+            cid = agent.Agent(lambda e: done.set() if e["type"] == "turn_end" else None).start(
+                conversation_id, "다음 주 부산 출장 일정표 좀 짜줘", [])
+            self.assertTrue(done.wait(10))
+        finally:
+            providers.make = original
+        return conversations.load(cid), fake
+
+    def test_a_new_chat_is_named_by_the_model_once(self):
+        conversation, fake = self.turn([[{"text": "일정표를 만들었어요."}, {"done": True}],
+                                        [{"text": "\"부산 출장 일정표\"."}, {"done": True}]])
+        self.assertEqual(conversation["title"], "부산 출장 일정표")
+        self.assertIn("Korean", fake.seen[1][0]["content"])
+        conversation, fake = self.turn([[{"text": "또 했어요."}, {"done": True}]], conversation["id"])
+        self.assertEqual(len(fake.seen), 1)                       # the second turn is not renamed
+        self.assertEqual(conversation["title"], "부산 출장 일정표")
+
+    def test_a_failed_title_request_changes_nothing(self):
+        conversation, _ = self.turn([[{"text": "일정표를 만들었어요."}, {"done": True}]])
+        self.assertEqual(conversation["title"], "다음 주 부산 출장 일정표 좀 짜줘")
+        self.assertNotIn("error", [i["kind"] for i in conversation["ui"]])
+
+
+class Searching(Sandbox):
+    def test_chats_are_found_by_title_or_by_what_was_said(self):
+        first = conversations.new(self.work)
+        first["title"] = "가계부"
+        conversations.save(first)
+        second = conversations.new(self.work)
+        second["title"] = "여행"
+        second["ui"] = [{"kind": "user", "text": "제주도 숙소 알아봐줘"},
+                        {"kind": "assistant", "text": "서귀포의 바닷가 호텔 세 곳을 찾았어요."}]
+        conversations.save(second)
+        self.assertEqual([r["id"] for r in conversations.search("가계")], [first["id"]])
+        found = conversations.search("바닷가")
+        self.assertEqual([r["id"] for r in found], [second["id"]])
+        self.assertIn("바닷가 호텔", found[0]["snippet"])
+        self.assertEqual(conversations.search("   "), [])

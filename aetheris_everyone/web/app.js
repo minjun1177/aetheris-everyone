@@ -418,8 +418,34 @@ async function startEngine() {
 
 /* ----------------------------------------------------- conversation list */
 
+let searchTimer = null;
+
+function setupSearch() {
+  const input = $("searchChats");
+  input.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      const q = input.value.trim();
+      S.search = q ? await api("conversations/search?q=" + encodeURIComponent(q)) : null;
+      if (input.value.trim() === q) renderConvList();
+    }, 250);
+  });
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") { input.value = ""; S.search = null; renderConvList(); } });
+}
+
 function renderConvList() {
   const list = $("convList");
+  $("searchIcon").innerHTML = icon("search");
+  $("searchChats").placeholder = t("nav.search");
+  if (S.search) {
+    const results = S.search.results || [];
+    list.replaceChildren(...(results.length ? results.map((item) => {
+      const row = convRow(item);
+      if (item.snippet) row.querySelector(".title").append(h("small", { class: "snippet", text: item.snippet }));
+      return row;
+    }) : [h("div", { class: "empty-nav", text: t("nav.search.none") })]));
+    return;
+  }
   const items = (S.state && S.state.conversations) || [];
   if (!items.length) { list.replaceChildren(h("div", { class: "empty-nav", text: t("nav.empty") })); return; }
   const now = new Date();
@@ -1633,9 +1659,19 @@ function openSettings(tab = "general") {
           onclick: async () => { await api("settings", { safety: level }); await refreshState(); draw(); },
         }, h("div", { class: "opt-title", text: t("safety." + level) }), h("div", { class: "opt-desc", text: t(`safety.${level}.desc`) }))))),
       notifyField(s),
+      toggleField(s, "auto_title", "settings.auto_title"),
       commandsField(s),
       ...searchFields(s),
     ];
+  }
+
+  function toggleField(s, key, label) {
+    const box = h("input", { type: "checkbox" });
+    box.checked = s[key] !== false;
+    box.addEventListener("change", async () => { await api("settings", { [key]: box.checked }); await refreshState(); toast(t("settings.saved")); });
+    return h("div", { class: "field" },
+      h("label", { class: "switch" }, box, h("span", { class: "track" }, h("span", { class: "thumb" })), h("span", { text: t(label) })),
+      h("small", { text: t(label + ".desc") }));
   }
 
   function notifyField(s) {
@@ -1833,6 +1869,7 @@ function openSettings(tab = "general") {
 
 async function init() {
   setupComposer();
+  setupSearch();
   setupSelectBar();
   $("newChat").addEventListener("click", newChat);
   $("openSettings").addEventListener("click", () => (settingsOpen() ? closeSettings() : openSettings()));

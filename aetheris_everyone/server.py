@@ -193,6 +193,8 @@ class Handler(BaseHTTPRequestHandler):
             if route == "conversation":
                 data = conversations.load((query.get("id") or [""])[0])
                 return self._json(data or {"error": "not_found"}, 200 if data else 404)
+            if route == "conversations/search":
+                return self._json({"results": conversations.search((query.get("q") or [""])[0])})
             if route == "folder/rules":
                 return self._json({"text": folder_rules.get((query.get("path") or [""])[0])})
             if route == "storage":
@@ -428,6 +430,7 @@ class Handler(BaseHTTPRequestHandler):
         running = self.app.agent.current
         if running is not None and running.get("id") == body.get("id"):
             running["title"] = title          # the turn saves its copy last; it must carry this
+            running["title_auto"] = False
         conversations.rename(body.get("id", ""), title)
         return self._json({"ok": True, "conversations": conversations.list_all()})
 

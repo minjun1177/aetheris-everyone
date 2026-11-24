@@ -84,6 +84,7 @@ def rename(conversation_id: str, title: str) -> None:
         data = load(conversation_id)
         if data:
             data["title"] = title.strip()[:120]
+            data["title_auto"] = False            # a title the person chose is kept
             save(data)
 
 
@@ -179,6 +180,31 @@ def rewind(conversation: dict) -> dict | None:
             "[System] The person took back their last request and your answer to it, but files "
             "changed while doing it are still changed: " + ", ".join(changed[:30]))})
     return request
+
+
+def search(query: str, limit: int = 40) -> list:
+    """Chats whose title or text contains `query`: [{"id", "title", "updated", "snippet"}]."""
+    needle = " ".join(str(query or "").split()).lower()
+    if not needle:
+        return []
+    found = []
+    for item in list_all():
+        snippet = ""
+        if needle not in (item.get("title") or "").lower():
+            data = load(item["id"]) or {}
+            for ui in data.get("ui", []):
+                text = str(ui.get("text") or "")
+                at = text.lower().find(needle)
+                if ui.get("kind") in ("user", "assistant") and at != -1:
+                    start = max(0, at - 30)
+                    snippet = ("…" if start else "") + " ".join(text[start:at + len(needle) + 50].split())
+                    break
+            else:
+                continue
+        found.append({**item, "snippet": snippet})
+        if len(found) >= limit:
+            break
+    return found
 
 
 def title_from(text: str) -> str:
