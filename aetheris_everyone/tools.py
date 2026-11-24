@@ -83,9 +83,12 @@ class Context:
         needed = set()
         # "Do everything" still asks before changing anything outside the work folder,
         # and before running a program: neither is limited to what the person chose.
-        if outside and "outside" not in self.granted and \
+        # Looking outside and changing outside are granted apart: allowing the AI to
+        # read a file elsewhere for this chat must not let it delete things there.
+        scope = "outside-change" if category == "change" else "outside-read"
+        if outside and scope not in self.granted and \
                 (self.safety != "auto" or category == "change"):
-            needed.add("outside")
+            needed.add(scope)
         if category == "change" and self.safety == "ask" and "change" not in self.granted:
             needed.add("change")
         if category == "run":
@@ -97,6 +100,8 @@ class Context:
         answer = self.ask(dict(request, category=category, outside=outside))
         if answer == "always":
             self.granted.update(needed - {"run"})
+            if "outside-change" in needed:
+                self.granted.add("outside-read")       # what may be changed may be looked at
         elif answer != "allow":
             raise Denied("the user said no")
 

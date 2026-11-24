@@ -106,6 +106,19 @@ class FileTools(Sandbox):
         self.assertNotIn("run_command", [t["name"] for t in tools.schemas(commands=False)])
         self.assertNotIn("run_command", tools.text_protocol_catalog(commands=False))
 
+    def test_reading_outside_for_this_chat_does_not_allow_changing_outside(self):
+        elsewhere = os.path.join(self.root, "elsewhere")
+        os.makedirs(elsewhere)
+        with open(os.path.join(elsewhere, "keep.txt"), "w") as f:
+            f.write("mine")
+        ctx = self.context(answer="always")
+        tools.dispatch(ctx, "read_file", {"path": os.path.join(elsewhere, "keep.txt")})
+        tools.dispatch(ctx, "list_folder", {"path": elsewhere})
+        self.assertEqual(len(self.asked), 1)              # the read grant covers other reads
+        tools.dispatch(ctx, "delete", {"path": os.path.join(elsewhere, "keep.txt")})
+        self.assertEqual(len(self.asked), 2)              # ...but a change outside is asked again
+        self.assertEqual(self.asked[1]["category"], "change")
+
     def test_allow_for_this_chat_never_covers_the_next_command(self):
         ctx = self.context(safety="auto", answer="always", commands=True)
         tools.dispatch(ctx, "run_command", {"command": "echo a"})
