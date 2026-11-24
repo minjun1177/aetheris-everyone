@@ -570,7 +570,8 @@ textarea.input.rules { resize: vertical; min-height: 150px; line-height: 1.5; fo
 @media (max-width: 900px) {
   .examples { grid-template-columns: repeat(2, 1fr); }
   .settings-body { flex-direction: column; }
-  .settings-nav { width: auto; flex-direction: row; overflow-x: auto; padding: 10px 12px 0; }
+  .settings-nav { width: auto; flex-direction: row; overflow-x: auto; padding: 10px 12px 4px; flex: none; }
+  .settings-nav button { flex: none; white-space: nowrap; }
   .settings-page { padding: 16px 18px 60px; }
   #sidebar { position: absolute; z-index: 40; height: 100%; box-shadow: var(--shadow-lg); }
   .chip span { max-width: 110px; }
