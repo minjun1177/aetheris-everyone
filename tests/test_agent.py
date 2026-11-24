@@ -214,3 +214,38 @@ class AgentTurn(Sandbox):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Closing(Sandbox):
+    def test_stop_then_wait_lets_the_turn_add_its_change_card(self):
+        settings.update({"work_folder": self.work, "safety": "balanced"})
+        release = threading.Event()
+
+        class SlowStream(FakeStream):
+            def __iter__(self):
+                yield {"text": "<tool_call>\n{\"name\": \"write_file\", \"arguments\": "
+                               "{\"path\": \"a.txt\", \"content\": \"x\"}}\n</tool_call>"}
+                yield {"done": True}
+
+        class Second(FakeStream):
+            def __iter__(self):
+                release.wait(5)        # the window closes while the model is answering
+                return iter([])
+
+        fake = FakeProvider([], native=False)
+        streams = [SlowStream([]), Second([])]
+        fake.stream = lambda *a, **k: streams.pop(0)
+        original = providers.make
+        providers.make = lambda *a, **k: fake
+        started = threading.Event()
+        bot = agent.Agent(lambda e: started.set() if e["type"] == "tool_start" else None)
+        try:
+            conversation_id = bot.start("", "write", [])
+            self.assertTrue(started.wait(5))
+            bot.stop()
+            release.set()
+            self.assertTrue(bot.wait(10))
+        finally:
+            providers.make = original
+        kinds = [i["kind"] for i in conversations.load(conversation_id)["ui"]]
+        self.assertIn("changes", kinds)

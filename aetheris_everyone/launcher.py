@@ -157,6 +157,10 @@ def main(argv: list | None = None) -> int:
             webbrowser.open(existing)
         return 0
 
+    try:
+        server.recover_changes()
+    except Exception as error:              # never keep the app from opening
+        print(f"could not recover change cards: {error}", file=sys.stderr)
     app = server.App()
     httpd = server.serve(app)
     url = f"http://127.0.0.1:{app.port}/?t={app.token}"
@@ -179,6 +183,7 @@ def main(argv: list | None = None) -> int:
         pass
     finally:
         app.agent.stop()
+        app.agent.wait(15)                  # its change card must reach the conversation
         app.job_stop.set()
         httpd.shutdown()
         info = paths.read_json(_instance_file())

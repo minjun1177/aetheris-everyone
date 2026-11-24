@@ -106,6 +106,7 @@ class Agent:
         self._stream = None
         self._approvals: dict = {}
         self._granted: dict = {}
+        self._thread: threading.Thread | None = None
 
     # -- control from the window ----------------------------------------------
     def start(self, conversation_id: str, text: str, attachments: list) -> str:
@@ -122,6 +123,7 @@ class Agent:
             self.cancel.clear()
         thread = threading.Thread(target=self._run, args=(conversation, text, attachments),
                                   daemon=True)
+        self._thread = thread
         thread.start()
         return conversation["id"]
 
@@ -133,6 +135,14 @@ class Agent:
         for pending in list(self._approvals.values()):
             pending["answer"] = "deny"
             pending["event"].set()
+
+    def wait(self, timeout: float) -> bool:
+        """Let a running turn finish its bookkeeping (the change card); False if it did not."""
+        thread = self._thread
+        if thread is None:
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
 
     def answer(self, approval_id: str, answer: str) -> bool:
         pending = self._approvals.get(approval_id)

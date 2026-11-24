@@ -467,6 +467,32 @@ def serve(app: App, port: int = 0) -> ThreadingHTTPServer:
     return server
 
 
+def recover_changes() -> int:
+    """Give back the Undo card of a turn the app was closed in the middle of.
+
+    The change set is saved after every operation, but its card is added to the
+    conversation only when the turn ends; a turn cut short by closing the app
+    (or a crash) left changes on disk that nothing in the window could undo.
+    Run at start, before any turn. Returns how many cards were restored.
+    """
+    restored = 0
+    for item in conversations.list_all():
+        conversation = conversations.load(item.get("id", ""))
+        if not conversation:
+            continue
+        shown = {i.get("change_id") for i in conversation["ui"] if i.get("kind") == "changes"}
+        missing = [m for m in history.recorded(conversation["id"])
+                   if m.get("id") not in shown]
+        for manifest in missing:
+            conversation["ui"].append({"kind": "changes", "change_id": manifest["id"],
+                                       "files": history.describe(manifest["ops"]),
+                                       "undone": bool(manifest.get("undone"))})
+            restored += 1
+        if missing:
+            conversations.save(conversation)
+    return restored
+
+
 def _attachments_root() -> str:
     return os.path.realpath(os.path.join(paths.data_dir(), "attachments"))
 

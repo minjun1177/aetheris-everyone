@@ -127,20 +127,7 @@ class ChangeSet:
         self.save()
 
     def files(self) -> list:
-        out = []
-        for op in self.ops:
-            if op["op"] == "write":
-                out.append({"kind": "created" if op["backup"] is None else "modified",
-                            "path": op["path"]})
-            elif op["op"] == "move":
-                out.append({"kind": "moved", "path": op["target"], "from": op["source"]})
-            elif op["op"] == "delete":
-                out.append({"kind": "deleted", "path": op["path"]})
-            elif op["op"] == "created":
-                out.append({"kind": "created", "path": op["path"]})
-            elif op["op"] == "mkdir":
-                out.append({"kind": "folder", "path": op["path"]})
-        return out
+        return describe(self.ops)
 
     def save(self) -> None:
         if not self.ops:
@@ -149,6 +136,24 @@ class ChangeSet:
         paths.write_json(os.path.join(self.dir, "manifest.json"), {
             "id": self.id, "conversation": self.conversation_id, "time": time.time(),
             "ops": self.ops, "undone": False})
+
+
+def describe(ops: list) -> list:
+    """What a change card lists for a set of recorded operations."""
+    out = []
+    for op in ops:
+        if op["op"] == "write":
+            out.append({"kind": "created" if op["backup"] is None else "modified",
+                        "path": op["path"]})
+        elif op["op"] == "move":
+            out.append({"kind": "moved", "path": op["target"], "from": op["source"]})
+        elif op["op"] == "delete":
+            out.append({"kind": "deleted", "path": op["path"]})
+        elif op["op"] == "created":
+            out.append({"kind": "created", "path": op["path"]})
+        elif op["op"] == "mkdir":
+            out.append({"kind": "folder", "path": op["path"]})
+    return out
 
 
 def _manifest_path(conversation_id: str, change_id: str) -> str:
@@ -222,6 +227,21 @@ def undo(conversation_id: str, change_id: str, force: bool = False) -> dict:
     manifest["undone"] = True
     paths.write_json(_manifest_path(conversation_id, change_id), manifest)
     return {"ok": not errors, "conflicts": [], "errors": errors}
+
+
+def recorded(conversation_id: str) -> list:
+    """Every change set kept for a conversation, oldest first."""
+    root = os.path.join(paths.data_dir(), "history", os.path.basename(conversation_id))
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        manifest = paths.read_json(os.path.join(root, name, "manifest.json"))
+        if isinstance(manifest, dict) and manifest.get("ops"):
+            found.append(manifest)
+    return found
 
 
 def forget(conversation_id: str) -> None:

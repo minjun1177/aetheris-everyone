@@ -1,4 +1,5 @@
 import json
+import os
 import urllib.error
 import urllib.request
 
@@ -144,3 +145,24 @@ class ServerBehaviour(ServerCase):
         for path, kind in expected.items():
             with urllib.request.urlopen(self.base + path) as response:
                 self.assertEqual(response.headers["Content-Type"], kind, path)
+
+
+class InterruptedTurn(ServerCase):
+    def test_a_change_set_without_its_card_gets_one_at_start(self):
+        from aetheris_everyone import conversations, history
+        conversation = conversations.new(self.work)
+        conversations.save(conversation)
+        changes = history.ChangeSet(conversation["id"])     # what a turn cut short leaves behind
+        path = f"{self.work}/made.txt"
+        changes.before_write(path)
+        with open(path, "w") as f:
+            f.write("x")
+        changes.after_write(path)
+        self.assertEqual(server.recover_changes(), 1)
+        cards = [i for i in conversations.load(conversation["id"])["ui"] if i["kind"] == "changes"]
+        self.assertEqual([c["change_id"] for c in cards], [changes.id])
+        self.assertEqual(cards[0]["files"], [{"kind": "created", "path": path}])
+        self.assertEqual(server.recover_changes(), 0)        # never added twice
+        status, raw = self.call("/api/undo", {"conversation": conversation["id"], "change": changes.id})
+        self.assertTrue(json.loads(raw)["ok"])
+        self.assertFalse(os.path.exists(path))
