@@ -311,8 +311,28 @@ function openFolderMenu() {
     h("div", { class: "path", text: folder }),
     h("button", { html: icon("external") + `<span>${t("top.folder.open")}</span>`, onclick: () => { closeMenus(); api("reveal", { path: folder }); } }),
     h("button", { html: icon("folder") + `<span>${t("top.folder.change")}</span>`, onclick: () => { closeMenus(); chooseFolder(); } }),
+    h("button", { html: icon("book") + `<span>${t("rules.menu")}</span>`, onclick: () => { closeMenus(); editFolderRules(folder); } }),
   );
   menu.hidden = false;
+}
+
+async function editFolderRules(folder) {
+  const current = await api("folder/rules?path=" + encodeURIComponent(folder));
+  const area = h("textarea", { class: "input rules", rows: "8", placeholder: t("rules.placeholder") });
+  area.value = (current && current.text) || "";
+  const m = modal([
+    h("h2", { text: t("rules.title") }),
+    h("p", { class: "lead", text: t("rules.lead", { folder: baseName(folder) }) }),
+    h("div", { class: "field" }, area, h("small", { text: t("rules.note") })),
+    h("div", { class: "modal-foot" }, h("div", { class: "right" },
+      h("button", { class: "btn", text: t("confirm.cancel"), onclick: () => m.close() }),
+      h("button", { class: "btn primary", text: t("rules.save"), onclick: async () => {
+        const result = await api("folder/rules", { path: folder, text: area.value });
+        m.close();
+        toast(result.ok ? (result.text ? t("rules.saved") : t("rules.cleared")) : t("err.other"));
+      } }))),
+  ]);
+  area.focus();
 }
 
 async function chooseFolder() {

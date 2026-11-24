@@ -1,6 +1,7 @@
 """Remembering between chats: asked first, shown in the prompt, and removable."""
 
 import json
+import os
 import unittest
 import urllib.request
 
@@ -78,6 +79,21 @@ class MemoryRoutes(Sandbox):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+
+
+class FolderRules(Sandbox):
+    def test_rules_reach_the_prompt_of_that_folder_only(self):
+        from aetheris_everyone import folder_rules
+        other = os.path.join(self.root, "other")
+        os.makedirs(other)
+        folder_rules.put(self.work, "  File names start with the date.  ")
+        self.assertEqual(folder_rules.get(self.work + os.sep), "File names start with the date.")
+        self.assertIn("File names start with the date.", prompts.system_prompt(self.work, True, False))
+        self.assertNotIn("File names start with the date.", prompts.system_prompt(other, True, False))
+        folder_rules.put(self.work, "")
+        self.assertEqual(folder_rules.get(self.work), "")
+        self.assertFalse(os.listdir(self.work))                  # nothing is added to the folder
 
 
 if __name__ == "__main__":

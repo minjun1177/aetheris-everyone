@@ -6,7 +6,7 @@ import re
 import sys
 import time
 
-from aetheris_everyone import memory, settings, tools
+from aetheris_everyone import folder_rules, memory, settings, tools
 
 _BASE = """You are Aetheris, a friendly assistant inside a desktop app called Aetheris Everyone. \
 The person using you is not a programmer. They see your replies in a chat window, and \
@@ -144,6 +144,10 @@ def system_prompt(folder: str, native: bool, careful: bool, user_text: str = "",
                         commands=_COMMANDS_ON if commands else _COMMANDS_OFF,
                         snapshot=folder_snapshot(folder),
                         today=time.strftime("%Y-%m-%d (%A)"))
+    rules = folder_rules.get(folder)
+    if rules:
+        text += ("\n\n## Rules the person set for this work folder\nFollow these in everything you do "
+                 "here:\n" + rules)
     if settings.get("memory"):
         text += _MEMORY.format(items=memory.prompt_block() or "(nothing yet)")
     if careful:

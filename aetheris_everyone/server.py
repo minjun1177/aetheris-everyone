@@ -20,8 +20,8 @@ import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from aetheris_everyone import (__version__, agent, conversations, history, memory, ollama_setup,
-                               paths, providers, settings, system, usage, websearch)
+from aetheris_everyone import (__version__, agent, conversations, folder_rules, history, memory,
+                               ollama_setup, paths, providers, settings, system, usage, websearch)
 
 MAX_UPLOAD = 200 * 1024 * 1024
 
@@ -193,6 +193,8 @@ class Handler(BaseHTTPRequestHandler):
             if route == "conversation":
                 data = conversations.load((query.get("id") or [""])[0])
                 return self._json(data or {"error": "not_found"}, 200 if data else 404)
+            if route == "folder/rules":
+                return self._json({"text": folder_rules.get((query.get("path") or [""])[0])})
             if route == "storage":
                 return self._json({"history": history.storage(),
                                    "attachments": history.folder_size(_attachments_root()),
@@ -499,6 +501,11 @@ class Handler(BaseHTTPRequestHandler):
                     "replies was reverted. Files are back to how they were before it.")})
                 conversations.save(conversation)
         return self._json(result)
+
+    def _post_folder_rules(self, body):
+        if not body.get("path"):
+            return self._json({"ok": False, "error": "other"})
+        return self._json({"ok": True, "text": folder_rules.put(body["path"], body.get("text", ""))})
 
     def _post_storage_prune(self, body):
         """Empty the undo history: all of it, or what is older than the kept days."""

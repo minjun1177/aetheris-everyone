@@ -531,6 +531,7 @@ details.thoughts div { white-space: pre-wrap; border-left: 2px solid var(--line)
   border: 1.5px solid var(--line); background: var(--bg); border-radius: 10px; padding: 9px 12px; width: 100%; outline: 0;
 }
 .input:focus { border-color: var(--accent); }
+textarea.input.rules { resize: vertical; min-height: 150px; line-height: 1.5; font-family: inherit; }
 .row { display: flex; gap: 8px; align-items: center; }
 .ok-text { color: var(--ok); font-weight: 650; }
 .err-text { color: var(--err); font-weight: 600; font-size: 14px; }
