@@ -140,8 +140,16 @@ def extract(path: str) -> str:
         raise ValueError(f".{ext} is not a document type this can read") from None
     try:
         return reader(path)[:TEXT_LIMIT]
+    except ValueError:
+        raise
     except (zipfile.BadZipFile, KeyError, ElementTree.ParseError) as error:
         raise ValueError(f"the file looks damaged or is not a real .{ext} ({error})") from None
+    except Exception as error:
+        # pypdf's own errors (PdfReadError, PdfStreamError ...) are not ValueErrors; one
+        # damaged PDF must not end a whole search or turn.
+        if ext != "pdf":
+            raise
+        raise ValueError(f"the PDF looks damaged or is protected ({type(error).__name__})") from None
 
 
 # -- writing -----------------------------------------------------------------

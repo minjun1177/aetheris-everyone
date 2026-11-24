@@ -347,3 +347,21 @@ class Documents(Sandbox):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DamagedDocuments(Sandbox):
+    def test_a_damaged_pdf_is_an_error_message_not_the_end_of_the_turn(self):
+        try:
+            import pypdf  # noqa: F401
+        except ImportError:
+            self.skipTest("pypdf is not installed")
+        with open(os.path.join(self.work, "broken.pdf"), "wb") as f:
+            f.write(b"%PDF-1.4\nthis is not really a pdf")
+        self.write("notes.txt", "budget line")
+        ctx = self.context()
+        status, result, _ = tools.dispatch(ctx, "read_file", {"path": "broken.pdf"})
+        self.assertEqual(status, "error")
+        self.assertIn("damaged", result)
+        status, result, _ = tools.dispatch(ctx, "search_text", {"text": "budget"})
+        self.assertEqual(status, "ok", result)              # the broken file is skipped
+        self.assertIn("notes.txt", result)
