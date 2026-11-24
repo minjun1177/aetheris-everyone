@@ -6,6 +6,7 @@ format:
     {"text": str}        answer text as it arrives
     {"thinking": str}    reasoning, shown folded away, never stored
     {"tool_call": {"name": str, "arguments": dict, "error": str?}}
+    {"usage": {"input": int, "output": int}}   tokens the request used, when the service says
     {"done": True, "truncated": bool}   truncated: stopped by the output limit
 
 Plain `urllib` only, so the packaged app carries no vendor SDKs. A failure is a
@@ -287,6 +288,15 @@ def _split_system(messages: list):
     return system, [m for m in messages if m["role"] != "system"]
 
 
+def _usage(input_tokens, output_tokens):
+    """A usage event, or None when the service did not report one."""
+    try:
+        used = {"input": int(input_tokens or 0), "output": int(output_tokens or 0)}
+    except (TypeError, ValueError):
+        return None
+    return {"usage": used} if used["input"] or used["output"] else None
+
+
 def _merge_runs(messages: list) -> list:
     """Consecutive messages from one side joined: Claude and Gemini need turns to alternate."""
     merged = []
@@ -402,6 +412,9 @@ class OllamaProvider(Provider):
                         yield {"tool_call": {"name": function["name"],
                                              "arguments": arguments if isinstance(arguments, dict) else {}}}
                 if chunk.get("done"):
+                    used = _usage(chunk.get("prompt_eval_count"), chunk.get("eval_count"))
+                    if used:
+                        yield used
                     yield {"done": True, "truncated": chunk.get("done_reason") == "length"}
                     return
 
@@ -439,14 +452,20 @@ class AnthropicProvider(Provider):
         def parse(response):
             pending = _Partial()
             truncated = False
+            tokens_in = tokens_out = 0
             for data in _sse(response):
                 try:
                     event = json.loads(data)
                 except ValueError:
                     continue
                 kind = event.get("type")
+                if kind == "message_start":
+                    usage = (event.get("message") or {}).get("usage") or {}
+                    tokens_in = sum(int(usage.get(k) or 0) for k in (
+                        "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
                 if kind == "message_delta":
                     truncated = (event.get("delta") or {}).get("stop_reason") == "max_tokens"
+                    tokens_out = int((event.get("usage") or {}).get("output_tokens") or tokens_out)
                 if kind == "content_block_start":
                     block = event.get("content_block") or {}
                     if block.get("type") == "tool_use":
@@ -468,6 +487,9 @@ class AnthropicProvider(Provider):
                     code = "rate_limit" if "overloaded" in detail.lower() else "server"
                     raise ProviderError(code, detail)
             yield from pending.drain()
+            used = _usage(tokens_in, tokens_out)
+            if used:
+                yield used
             yield {"done": True, "truncated": truncated}
 
         return Stream(self.name, f"{self.base}/v1/messages", payload, self._headers(), parse)
@@ -502,7 +524,8 @@ class OpenAIProvider(Provider):
                 content = m["content"]
             out.append({"role": m["role"], "content": content})
         payload = {"model": self.model, "messages": out, "stream": True,
-                   "max_completion_tokens": MAX_OUTPUT_TOKENS}
+                   "max_completion_tokens": MAX_OUTPUT_TOKENS,
+                   "stream_options": {"include_usage": True}}
         if tools:
             payload["tools"] = [{"type": "function", "function": {
                 "name": t["name"], "description": t["description"],
@@ -511,6 +534,7 @@ class OpenAIProvider(Provider):
         def parse(response):
             pending = _Partial()
             truncated = False
+            used = None
             for data in _sse(response):
                 if data == "[DONE]":
                     break
@@ -520,6 +544,9 @@ class OpenAIProvider(Provider):
                     continue
                 if event.get("error"):
                     raise ProviderError("server", str(event["error"].get("message", "error")))
+                if isinstance(event.get("usage"), dict):
+                    used = _usage(event["usage"].get("prompt_tokens"),
+                                  event["usage"].get("completion_tokens"))
                 for choice in event.get("choices") or []:
                     if choice.get("finish_reason") == "length":
                         truncated = True
@@ -534,6 +561,8 @@ class OpenAIProvider(Provider):
                         pending.start(key, function.get("name", ""), call.get("id", ""))
                         pending.feed(key, function.get("arguments", ""))
             yield from pending.drain()
+            if used:
+                yield used
             yield {"done": True, "truncated": truncated}
 
         return Stream(self.name, f"{self.base}/chat/completions", payload, self._headers(), parse)
@@ -582,6 +611,7 @@ class GeminiProvider(Provider):
 
         def parse(response):
             truncated = False
+            used = None
             for data in _sse(response):
                 try:
                     event = json.loads(data)
@@ -589,6 +619,11 @@ class GeminiProvider(Provider):
                     continue
                 if event.get("error"):
                     raise ProviderError("server", str(event["error"].get("message", "error")))
+                meta = event.get("usageMetadata")
+                if isinstance(meta, dict):           # running totals: the last one counts
+                    used = _usage(meta.get("promptTokenCount"),
+                                  int(meta.get("candidatesTokenCount") or 0)
+                                  + int(meta.get("thoughtsTokenCount") or 0)) or used
                 for candidate in event.get("candidates") or []:
                     if candidate.get("finishReason") == "MAX_TOKENS":
                         truncated = True
@@ -600,6 +635,8 @@ class GeminiProvider(Provider):
                                                  "arguments": args if isinstance(args, dict) else {}}}
                         elif part.get("text"):
                             yield {"thinking" if part.get("thought") else "text": part["text"]}
+            if used:
+                yield used
             yield {"done": True, "truncated": truncated}
 
         url = f"{self.base}/v1beta/models/{self.model}:streamGenerateContent?alt=sse"

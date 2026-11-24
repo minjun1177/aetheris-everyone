@@ -178,3 +178,31 @@ class Retrying(unittest.TestCase):
         converted = providers._error_from_http(error, "gemini")
         self.assertEqual((converted.code, converted.retry_after), ("rate_limit", 12.0))
         self.assertIsNone(providers.retry_after({}))
+
+
+def _usage_cases():
+    return {
+        "ollama": [json.dumps({"message": {"content": "x"}}),
+                   json.dumps({"done": True, "prompt_eval_count": 120, "eval_count": 30})],
+        "anthropic": sse({"type": "message_start", "message": {"usage": {"input_tokens": 100,
+                                                                         "cache_read_input_tokens": 20}}},
+                         {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "x"}},
+                         {"type": "message_delta", "delta": {}, "usage": {"output_tokens": 30}}),
+        "openai": sse({"choices": [{"delta": {"content": "x"}}]},
+                      {"choices": [], "usage": {"prompt_tokens": 120, "completion_tokens": 30}}, "[DONE]"),
+        "gemini": sse({"candidates": [{"content": {"parts": [{"text": "x"}]}}],
+                       "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 10}},
+                      {"candidates": [{"content": {"parts": [{"text": "y"}]}}],
+                       "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 25,
+                                         "thoughtsTokenCount": 5}}),
+    }
+
+
+class UsageReported(Sandbox):
+    def test_every_provider_reports_the_tokens_of_a_request(self):
+        for name, lines in _usage_cases().items():
+            events, sent = Streams.stream(self, name, lines)
+            self.assertIn({"usage": {"input": 120, "output": 30}}, events, name)
+            self.assertEqual(events[-1], {"done": True, "truncated": False}, name)
+            if name == "openai":
+                self.assertEqual(sent["payload"]["stream_options"], {"include_usage": True})

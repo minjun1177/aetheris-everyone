@@ -21,7 +21,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from aetheris_everyone import (__version__, agent, conversations, history, memory, ollama_setup,
-                               paths, providers, settings, system, websearch)
+                               paths, providers, settings, system, usage, websearch)
 
 MAX_UPLOAD = 200 * 1024 * 1024
 
@@ -193,6 +193,8 @@ class Handler(BaseHTTPRequestHandler):
             if route == "conversation":
                 data = conversations.load((query.get("id") or [""])[0])
                 return self._json(data or {"error": "not_found"}, 200 if data else 404)
+            if route == "usage":
+                return self._json({"months": usage.summary()})
             if route == "ollama/status":
                 return self._json(ollama_setup.status())
             if route == "ollama/size":

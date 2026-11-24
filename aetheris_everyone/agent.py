@@ -15,7 +15,7 @@ import time
 import uuid
 
 from aetheris_everyone import (conversations, history, prompts, providers, settings,
-                               toolcalls, tools)
+                               toolcalls, tools, usage)
 
 MAX_STEPS = 40
 MAX_SAME_CALL = 3
@@ -108,6 +108,7 @@ class Agent:
         self._granted: dict = {}
         self._thread: threading.Thread | None = None
         self.current: dict | None = None      # the conversation the running turn holds
+        self._last_usage: dict | None = None  # tokens of the latest request, from the stream
 
     # -- control from the window ----------------------------------------------
     def start(self, conversation_id: str, text: str, attachments: list) -> str:
@@ -272,6 +273,7 @@ class Agent:
             self.emit({"type": "reply_start", "conversation": cid, "id": reply_id})
             raw, native_calls, thinking, truncated = self._stream_reply(
                 cid, reply_id, provider, history_now, native, careful, ctx.allow_commands)
+            used = self._count_usage(conversation, provider)
             if self.cancel.is_set():
                 visible = toolcalls.visible_text(raw)
                 if visible:
@@ -293,7 +295,8 @@ class Agent:
                 stored = "\n".join([visible] + [toolcalls.render_call(n, a) for n, a, _ in calls]).strip()
             if visible or thinking:
                 self._ui(conversation, {"kind": "assistant", "id": reply_id, "text": visible,
-                                        "thinking": thinking[:20000] if thinking else ""})
+                                        "thinking": thinking[:20000] if thinking else "",
+                                        **({"usage": used} if used else {})})
             else:
                 self.emit({"type": "reply_empty", "conversation": cid, "id": reply_id})
 
@@ -364,6 +367,7 @@ class Agent:
         stream_filter = toolcalls.StreamFilter()
         raw, thinking, calls = [], [], []
         truncated = False
+        self._last_usage = None
         attempt = 0
         while True:
             try:
@@ -397,6 +401,8 @@ class Agent:
                                    "kind": "thinking", "text": event["thinking"]})
                     elif "tool_call" in event:
                         calls.append(event["tool_call"])
+                    elif "usage" in event:
+                        self._last_usage = event["usage"]
                     elif event.get("done"):
                         truncated = bool(event.get("truncated"))
                 break
@@ -417,6 +423,25 @@ class Agent:
                        "kind": "thinking" if kind == "think" else "text", "text": piece})
         return "".join(raw), calls, "".join(thinking), truncated
 
+
+    def _count_usage(self, conversation: dict, provider) -> dict | None:
+        """Add the last request's tokens to the chat and the monthly ledger, and tell the window."""
+        used = dict(self._last_usage or {})
+        self._last_usage = None
+        if not used:
+            return None
+        total = conversation.setdefault("usage", {"input": 0, "output": 0})
+        total["input"] = int(total.get("input") or 0) + used["input"]
+        total["output"] = int(total.get("output") or 0) + used["output"]
+        total["last_input"] = used["input"]          # how full the model's memory was
+        try:
+            usage.record(provider.name, getattr(provider, "model", ""), used["input"], used["output"])
+        except OSError:
+            pass
+        limit = int(settings.get("context_tokens") or 0) if provider.name == "ollama" else 0
+        self.emit({"type": "usage", "conversation": conversation["id"], "used": used,
+                   "total": dict(total), "limit": limit})
+        return used
 
     def _wait_to_retry(self, cid: str, reply_id: str, error: Exception, attempt: int) -> bool:
         """Wait before asking a busy service again; False when it should not be asked again."""

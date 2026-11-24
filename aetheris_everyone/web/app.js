@@ -118,6 +118,29 @@ function formatBytes(n) {
 
 function openUrl(url) { api("open", { url }); }
 
+function formatTokens(n) {
+  n = Number(n) || 0;
+  if (n < 1000) return String(n);
+  if (n < 1e6) return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
+  return `${(n / 1e6).toFixed(1)}M`;
+}
+
+/* The chat's tokens so far, and for a local model how full its memory was last time. */
+function renderUsage() {
+  const line = $("usageLine");
+  const used = S.conv && S.conv.usage;
+  if (!used || !(used.input || used.output)) { line.textContent = ""; line.title = ""; return; }
+  let text = t("usage.chat", { n: formatTokens(used.input + used.output) });
+  const limit = S.usageLimit || (settingsNow().provider === "ollama" ? settingsNow().context_tokens : 0);
+  if (limit && used.last_input) {
+    const pct = Math.min(100, Math.round((used.last_input / limit) * 100));
+    text += ` · ${t("usage.context", { pct })}`;
+    line.classList.toggle("warn-text", pct >= 85);
+  } else line.classList.remove("warn-text");
+  line.textContent = text;
+  line.title = t("usage.detail", { input: used.input.toLocaleString(), output: used.output.toLocaleString() });
+}
+
 /* --------------------------------------------------------------- state */
 
 const S = {
@@ -176,6 +199,7 @@ function renderChrome() {
   renderTitle();
   renderBanner();
   renderModelChip();
+  renderUsage();
 }
 
 function currentFolder() {
@@ -566,7 +590,8 @@ function aiMessage(item) {
     bubble.append(h("div", { class: "msg-actions" }, h("button", {
       html: icon("copy") + t("msg.copy"),
       onclick: () => copyText(item.text),
-    })));
+    }), item.usage ? h("span", { class: "tokens", title: t("usage.detail", { input: item.usage.input.toLocaleString(), output: item.usage.output.toLocaleString() }),
+      text: `${formatTokens(item.usage.input)} → ${formatTokens(item.usage.output)} ${t("usage.tokens")}` }) : null));
   }
   return aiShell(bubble);
 }
@@ -827,6 +852,13 @@ function handleEvent(event) {
       scrollDown();
       break;
     }
+    case "usage":
+      if (event.conversation === S.convId && S.conv) {
+        S.conv.usage = event.total;
+        S.usageLimit = event.limit;
+        renderUsage();
+      }
+      break;
     case "reply_empty":
       if (!isHere(event)) break;
       if (S.live[event.id]) { S.live[event.id].el.remove(); delete S.live[event.id]; }
@@ -1407,7 +1439,7 @@ function openSetup(startStep = 0) {
 // Settings open in the main area, in place of the chat (like a desktop app's
 // preferences page), with their sections listed down the left.
 const SETTINGS_SECTIONS = [
-  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["about", "info"],
+  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["usage", "table"], ["about", "info"],
 ];
 const SETTINGS_PAGES = {};
 
@@ -1585,7 +1617,25 @@ function openSettings(tab = "general") {
     ];
   }
 
-  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, about });
+  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, usage: usagePage, about });
+
+  function usagePage() {
+    const area = h("div", {}, h("p", { class: "muted", text: t("model.loading") }));
+    api("usage").then((result) => {
+      const months = (result && result.months) || [];
+      if (!months.length) { area.replaceChildren(h("p", { class: "muted", text: t("usage.none") })); return; }
+      area.replaceChildren(...months.slice(0, 6).map((month) => h("div", { class: "usage-month" },
+        h("h3", { text: month.month }),
+        h("div", { class: "md" }, h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ...[t("usage.col.model"), t("usage.col.requests"), t("usage.col.input"), t("usage.col.output")].map((c) => h("th", { text: c })))),
+          h("tbody", {}, ...month.items.map((item) => h("tr", {},
+            h("td", { title: item.model }, h("b", { text: shortModel(item.model) }), h("div", { class: "muted", text: PROVIDER_LABELS[item.provider] || item.provider })),
+            h("td", { text: item.requests.toLocaleString() }),
+            h("td", { text: item.input.toLocaleString() }),
+            h("td", { text: item.output.toLocaleString() }))))))))));
+    });
+    return [h("p", { class: "lead muted", text: t("usage.lead") }), area];
+  }
 
   function about() {
     return [

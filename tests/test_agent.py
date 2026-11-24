@@ -329,3 +329,37 @@ class BusyService(Sandbox):
         conversation, events = self.turn([providers.ProviderError("bad_key")])
         self.assertFalse([e for e in events if e["type"] == "retry"])
         self.assertEqual(conversation["ui"][-1]["code"], "bad_key")
+
+
+class Counting(Sandbox):
+    def test_tokens_are_added_to_the_chat_the_reply_and_the_month(self):
+        from aetheris_everyone import usage
+        settings.update({"work_folder": self.work, "safety": "balanced"})
+        fake = FakeProvider([
+            [{"text": "<tool_call>\n{\"name\": \"list_folder\", \"arguments\": {}}\n</tool_call>"},
+             {"usage": {"input": 100, "output": 20}}, {"done": True}],
+            [{"text": "Done."}, {"usage": {"input": 150, "output": 5}}, {"done": True}]], native=False)
+        fake.name, fake.model = "ollama", "gemma4:e4b"
+        original = providers.make
+        providers.make = lambda *a, **k: fake
+        events, done = [], threading.Event()
+
+        def emit(event):
+            events.append(event)
+            if event["type"] == "turn_end":
+                done.set()
+
+        try:
+            conversation_id = agent.Agent(emit).start("", "look", [])
+            self.assertTrue(done.wait(10))
+        finally:
+            providers.make = original
+        conversation = conversations.load(conversation_id)
+        self.assertEqual(conversation["usage"], {"input": 250, "output": 25, "last_input": 150})
+        reply = [i for i in conversation["ui"] if i["kind"] == "assistant"][-1]
+        self.assertEqual(reply["usage"], {"input": 150, "output": 5})
+        sent = [e for e in events if e["type"] == "usage"]
+        self.assertEqual(sent[-1]["limit"], settings.get("context_tokens"))
+        month = usage.summary()[0]
+        self.assertEqual(month["items"], [{"provider": "ollama", "model": "gemma4:e4b",
+                                           "input": 250, "output": 25, "requests": 2}])
