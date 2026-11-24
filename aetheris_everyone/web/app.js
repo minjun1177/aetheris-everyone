@@ -220,6 +220,7 @@ async function chooseFolder() {
   if (!picked.path) return;
   if (S.conv && S.conv.id && S.conv.ui && S.conv.ui.length) {
     const result = await api("conversation/folder", { id: S.conv.id, folder: picked.path });
+    if (result.error === "busy") return toast(t("err.busy"));
     if (result.ok) S.conv.folder = result.folder;
   } else {
     const result = await api("settings", { work_folder: picked.path });

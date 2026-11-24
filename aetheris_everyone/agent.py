@@ -107,6 +107,7 @@ class Agent:
         self._approvals: dict = {}
         self._granted: dict = {}
         self._thread: threading.Thread | None = None
+        self.current: dict | None = None      # the conversation the running turn holds
 
     # -- control from the window ----------------------------------------------
     def start(self, conversation_id: str, text: str, attachments: list) -> str:
@@ -120,6 +121,7 @@ class Agent:
                 conversation["title"] = conversations.title_from(text)
                 conversations.save(conversation)
             self.busy = conversation["id"]
+            self.current = conversation
             self.cancel.clear()
         thread = threading.Thread(target=self._run, args=(conversation, text, attachments),
                                   daemon=True)
@@ -236,6 +238,7 @@ class Agent:
             conversations.save(conversation)
             with self._lock:
                 self.busy = None
+                self.current = None
             self.emit({"type": "turn_end", "conversation": cid})
 
     def _loop(self, conversation, provider, native: bool, careful: bool, ctx) -> None:

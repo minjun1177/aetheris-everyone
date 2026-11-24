@@ -391,7 +391,11 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, "conversation": conversation})
 
     def _post_conversation_rename(self, body):
-        conversations.rename(body.get("id", ""), body.get("title", ""))
+        title = str(body.get("title") or "").strip()[:120]
+        running = self.app.agent.current
+        if running is not None and running.get("id") == body.get("id"):
+            running["title"] = title          # the turn saves its copy last; it must carry this
+        conversations.rename(body.get("id", ""), title)
         return self._json({"ok": True, "conversations": conversations.list_all()})
 
     def _post_conversation_delete(self, body):
@@ -410,9 +414,11 @@ class Handler(BaseHTTPRequestHandler):
         folder = os.path.abspath(os.path.expanduser(str(body.get("folder") or "")))
         if not body.get("folder"):
             return self._json({"ok": False})
+        if conversation and conversation["id"] == self.app.agent.busy:
+            return self._json({"ok": False, "error": "busy"})   # the turn works in the old one
         os.makedirs(folder, exist_ok=True)
         # Only this conversation moves; the default for new conversations stays as it is.
-        if conversation and conversation["id"] != self.app.agent.busy:
+        if conversation:
             conversation["folder"] = folder
             conversations.save(conversation)
         return self._json({"ok": True, "folder": folder})

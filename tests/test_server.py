@@ -166,3 +166,24 @@ class InterruptedTurn(ServerCase):
         status, raw = self.call("/api/undo", {"conversation": conversation["id"], "change": changes.id})
         self.assertTrue(json.loads(raw)["ok"])
         self.assertFalse(os.path.exists(path))
+
+
+class EditsDuringATurn(ServerCase):
+    def test_rename_reaches_the_running_turn_and_folder_change_is_refused(self):
+        from aetheris_everyone import conversations
+        conversation = conversations.new(self.work)
+        conversations.save(conversation)
+        self.app.agent.busy = conversation["id"]       # a turn holding its own copy
+        self.app.agent.current = conversation
+        try:
+            self.call("/api/conversation/rename", {"id": conversation["id"], "title": "Budget"})
+            self.assertEqual(conversation["title"], "Budget")
+            status, raw = self.call("/api/conversation/folder",
+                                    {"id": conversation["id"], "folder": self.root})
+            self.assertEqual(json.loads(raw), {"ok": False, "error": "busy"})
+        finally:
+            self.app.agent.busy = None
+            self.app.agent.current = None
+        conversations.save(conversation)               # what the turn does when it ends
+        self.assertEqual(conversations.load(conversation["id"])["title"], "Budget")
+        self.assertEqual(conversations.load(conversation["id"])["folder"], self.work)
