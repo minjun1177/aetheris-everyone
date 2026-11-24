@@ -62,6 +62,10 @@ const STRINGS = {
     "msg.thoughts": "생각 과정 보기",
     "msg.copy": "복사",
     "msg.copied": "복사했어요",
+    "quote.reply": "이 부분에 답장",
+    "quote.explain": "쉽게 설명해줘",
+    "quote.explain.prompt": "이 부분을 쉽게 설명해줘.",
+    "quote.remove": "인용 빼기",
 
     "tool.list_folder": "폴더 살펴보기",
     "tool.find_files": "파일 찾기",
@@ -370,6 +374,10 @@ const STRINGS = {
     "msg.thoughts": "Show reasoning",
     "msg.copy": "Copy",
     "msg.copied": "Copied",
+    "quote.reply": "Reply to this",
+    "quote.explain": "Explain this",
+    "quote.explain.prompt": "Explain this part in simple words.",
+    "quote.remove": "Remove the quote",
 
     "tool.list_folder": "Look in folder",
     "tool.find_files": "Find files",

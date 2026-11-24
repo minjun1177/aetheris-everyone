@@ -398,8 +398,9 @@ class Handler(BaseHTTPRequestHandler):
             os.makedirs(folder, exist_ok=True)
             settings.update({"work_folder": folder})
         try:
+            quote = str(body.get("quote") or "").strip()[:4000]
             conversation_id = self.app.agent.start(body.get("conversation") or "", text or "(see attached)",
-                                                   attachments)
+                                                   attachments, quote)
         except agent.Busy:
             return self._json({"ok": False, "error": "busy"})
         return self._json({"ok": True, "conversation": conversation_id})

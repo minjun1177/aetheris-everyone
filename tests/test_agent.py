@@ -363,3 +363,23 @@ class Counting(Sandbox):
         month = usage.summary()[0]
         self.assertEqual(month["items"], [{"provider": "ollama", "model": "gemma4:e4b",
                                            "input": 250, "output": 25, "requests": 2}])
+
+
+class Quoting(Sandbox):
+    def test_a_selected_part_goes_to_the_model_and_is_shown_with_the_message(self):
+        settings.update({"work_folder": self.work, "safety": "balanced"})
+        fake = FakeProvider([[{"text": "It means the sum."}, {"done": True}]], native=False)
+        original = providers.make
+        providers.make = lambda *a, **k: fake
+        done = threading.Event()
+        try:
+            conversation_id = agent.Agent(lambda e: done.set() if e["type"] == "turn_end" else None).start(
+                "", "What does this mean?", [], quote="Σ x_i")
+            self.assertTrue(done.wait(10))
+        finally:
+            providers.make = original
+        conversation = conversations.load(conversation_id)
+        self.assertEqual(conversation["ui"][0]["quote"], "Σ x_i")
+        sent = fake.seen[0][-1]["content"]
+        self.assertIn('"""\nΣ x_i\n"""', sent)
+        self.assertTrue(sent.endswith("What does this mean?"))

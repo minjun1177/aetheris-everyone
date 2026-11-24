@@ -149,6 +149,7 @@ const S = {
   conv: null,
   busy: null,
   attachments: [],
+  quote: "",           // part of a message the person selected to answer or ask about
   live: {},            // reply id -> {text, thinking, el}
   liveTools: {},       // call id -> element
   approvals: {},       // approval id -> event
@@ -572,6 +573,7 @@ function userMessage(item) {
     ? h("img", { class: "thumb", src: `/api/file?t=${encodeURIComponent(TOKEN)}&path=${encodeURIComponent(a.path)}`, alt: a.name })
     : h("span", { class: "att", html: icon("file") + " " + escapeHtml(a.name) }));
   return h("div", { class: "msg user" }, h("div", { class: "bubble" },
+    item.quote ? h("div", { class: "quote", text: item.quote }) : null,
     atts.length ? h("div", { class: "atts" }, ...atts) : null,
     item.text && item.text !== "(see attached)" ? h("div", { text: item.text }) : null));
 }
@@ -987,7 +989,7 @@ async function send() {
   if (S.busy) return toast(t("err.busy"));
   const attachments = S.attachments.map((a) => a.path);
   if (!S.convId) S.adopt = true;
-  const result = await api("send", { conversation: S.convId, text, attachments });
+  const result = await api("send", { conversation: S.convId, text, attachments, quote: S.quote });
   if (!result.ok) {
     S.adopt = false;
     return toast(errText(result.error));
@@ -1001,9 +1003,70 @@ async function send() {
   }
   $("input").value = "";
   S.attachments = [];
+  setQuote("");
   renderAttachments();
   autosize();
   renderTitle();
+}
+
+/* ------------------------------------------- answering a selected part */
+
+const QUOTE_LIMIT = 4000;
+
+function setQuote(text) {
+  S.quote = String(text || "").trim().slice(0, QUOTE_LIMIT);
+  const row = $("quoteRow");
+  row.hidden = !S.quote;
+  if (S.quote) {
+    row.replaceChildren(h("span", { html: icon("undo") }), h("span", { class: "q", text: S.quote }),
+      h("button", { title: t("quote.remove"), html: icon("x"), onclick: () => setQuote("") }));
+  }
+}
+
+function selectedInThread() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+  const text = selection.toString().trim();
+  const range = selection.getRangeAt(0);
+  const start = range.commonAncestorContainer;
+  const node = start.nodeType === 1 ? start : start.parentElement;
+  if (!text || !node || !node.closest("#messages .msg .bubble, #messages .msg .md")) return null;
+  return { text, rect: range.getBoundingClientRect() };
+}
+
+function hideSelectBar() { $("selectBar").hidden = true; }
+
+function showSelectBar() {
+  const found = selectedInThread();
+  const bar = $("selectBar");
+  if (!found) return hideSelectBar();
+  const ask = (prompt) => () => {
+    hideSelectBar();
+    setQuote(found.text);
+    window.getSelection().removeAllRanges();
+    if (prompt && !S.busy) { $("input").value = prompt; autosize(); send(); return; }
+    if (prompt) $("input").value = prompt;
+    autosize();
+    $("input").focus();
+  };
+  bar.replaceChildren(
+    h("button", { html: icon("undo") + `<span>${escapeHtml(t("quote.reply"))}</span>`, onclick: ask("") }),
+    h("button", { html: icon("sparkle") + `<span>${escapeHtml(t("quote.explain"))}</span>`, onclick: ask(t("quote.explain.prompt")) }),
+    h("button", { html: icon("copy") + `<span>${escapeHtml(t("msg.copy"))}</span>`, onclick: () => { hideSelectBar(); copyText(found.text); } }));
+  bar.hidden = false;
+  const width = bar.offsetWidth;
+  const left = Math.max(8, Math.min(window.innerWidth - width - 8, found.rect.left + found.rect.width / 2 - width / 2));
+  const top = found.rect.top > 56 ? found.rect.top - bar.offsetHeight - 8 : found.rect.bottom + 8;
+  bar.style.left = `${left}px`;
+  bar.style.top = `${top}px`;
+}
+
+function setupSelectBar() {
+  document.addEventListener("mouseup", (e) => { if (!(e.target.closest && e.target.closest("#selectBar"))) setTimeout(showSelectBar, 0); });
+  document.addEventListener("keyup", (e) => { if (e.shiftKey) showSelectBar(); });
+  $("selectBar").addEventListener("mousedown", (e) => e.preventDefault());   // keep the selection
+  $("messages").addEventListener("scroll", hideSelectBar);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideSelectBar(); });
 }
 
 function renderAttachments() {
@@ -1663,6 +1726,7 @@ function openSettings(tab = "general") {
 
 async function init() {
   setupComposer();
+  setupSelectBar();
   $("newChat").addEventListener("click", newChat);
   $("openSettings").addEventListener("click", () => (settingsOpen() ? closeSettings() : openSettings()));
   $("engineStatus").addEventListener("click", engineClicked);

@@ -111,7 +111,7 @@ class Agent:
         self._last_usage: dict | None = None  # tokens of the latest request, from the stream
 
     # -- control from the window ----------------------------------------------
-    def start(self, conversation_id: str, text: str, attachments: list) -> str:
+    def start(self, conversation_id: str, text: str, attachments: list, quote: str = "") -> str:
         with self._lock:
             if self.busy:
                 raise Busy()
@@ -124,7 +124,7 @@ class Agent:
             self.busy = conversation["id"]
             self.current = conversation
             self.cancel.clear()
-        thread = threading.Thread(target=self._run, args=(conversation, text, attachments),
+        thread = threading.Thread(target=self._run, args=(conversation, text, attachments, quote),
                                   daemon=True)
         self._thread = thread
         thread.start()
@@ -184,7 +184,7 @@ class Agent:
         conversation["ui"].append(item)
         self.emit({"type": "item", "conversation": conversation["id"], "item": item})
 
-    def _run(self, conversation: dict, text: str, attachments: list) -> None:
+    def _run(self, conversation: dict, text: str, attachments: list, quote: str = "") -> None:
         cid = conversation["id"]
         folder = conversation.get("folder") or settings.get("work_folder") or os.path.expanduser("~")
         if not conversation.get("folder"):
@@ -198,8 +198,13 @@ class Agent:
             self._ui(conversation, {"kind": "user", "text": text, "time": time.time(),
                                     "attachments": [{"name": os.path.basename(p), "path": p,
                                                      "image": providers.is_image(p)}
-                                                    for p in attachments]})
+                                                    for p in attachments],
+                                    **({"quote": quote} if quote else {})})
             content = text
+            if quote:
+                # The part of the chat the person selected and is answering or asking about.
+                content = ("About this part of our conversation:\n\"\"\"\n" + quote + "\n\"\"\"\n\n"
+                           + text)
             if files:
                 content += "\n\n" + "\n".join(f"[Attached file: {p}]" for p in files)
             message = {"role": "user", "content": content}
