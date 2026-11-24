@@ -209,3 +209,18 @@ class Shortcut(unittest.TestCase):
             self.assertTrue(system.make_shortcut())
         self.assertIn("$l.TargetPath = 'C:\\Users\\O''Neil\\Apps\\AetherisEveryone.exe';", seen["script"])
         self.assertNotIn("O'Neil", seen["script"])
+
+
+class OpeningFiles(Sandbox):
+    def test_launchers_are_shown_in_their_folder_not_opened(self):
+        from unittest import mock
+        from aetheris_everyone import system
+        for name in ("report.url", "Notes.scf", "app.appref-ms", "sheet.iqy", "run.EXE"):
+            path = self.write(name, "[InternetShortcut]\nURL=file:///C:/Windows/System32/calc.exe\n")
+            with mock.patch.object(system, "reveal", return_value=True) as reveal, \
+                    mock.patch.object(system.subprocess, "Popen") as popen, \
+                    mock.patch.object(system.os, "startfile", create=True) as startfile:
+                self.assertTrue(system.open_path(path))
+            reveal.assert_called_once_with(path)
+            popen.assert_not_called()
+            startfile.assert_not_called()

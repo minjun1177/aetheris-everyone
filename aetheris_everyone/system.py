@@ -16,7 +16,15 @@ _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 # Never launched from the chat with a click: these run code.
 _RUNNABLE = {".exe", ".bat", ".cmd", ".com", ".msi", ".ps1", ".vbs", ".vbe", ".js", ".jse",
              ".wsf", ".wsh", ".scr", ".lnk", ".sh", ".command", ".app", ".jar", ".py", ".pyw",
-             ".reg", ".hta", ".cpl", ".desktop", ".run", ".bin", ".appimage", ".pkg", ".dmg"}
+             ".reg", ".hta", ".cpl", ".desktop", ".run", ".bin", ".appimage", ".pkg", ".dmg",
+             # shortcuts and launchers that start a program named inside them (a text file
+             # with URL=file:///...calc.exe is enough), and other code Windows runs on open
+             ".url", ".website", ".scf", ".pif", ".msp", ".mst", ".msc", ".inf", ".chm",
+             ".appref-ms", ".application", ".settingcontent-ms", ".library-ms", ".search-ms",
+             ".gadget", ".psm1", ".psd1", ".ws", ".wsc", ".vb", ".xll", ".iqy", ".slk",
+             ".mof", ".diagcab", ".xbap", ".jnlp",
+             # macOS and Linux launchers
+             ".terminal", ".workflow", ".tool", ".fileloc", ".inetloc", ".webloc", ".action"}
 
 
 def open_url(url: str) -> bool:
