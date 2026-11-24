@@ -182,6 +182,18 @@ function currentFolder() {
 
 function renderTitle() {
   $("convTitle").textContent = (S.conv && S.conv.title) || "Aetheris Everyone";
+  const button = $("exportChat");
+  button.innerHTML = icon("download");
+  button.title = t("top.export");
+  button.hidden = !(S.conv && S.conv.id && S.conv.ui && S.conv.ui.length);
+}
+
+async function exportChat() {
+  if (!S.convId) return;
+  const result = await api("conversation/export", { id: S.convId, language: LANG });
+  if (!result.ok) return toast(errText(result.error));
+  toast(t("top.export.ok", { name: baseName(result.path) }), 3600);
+  api("reveal", { path: result.path });
 }
 
 function renderFolderChip() {
@@ -1503,6 +1515,7 @@ async function init() {
   $("newChat").addEventListener("click", newChat);
   $("openSettings").addEventListener("click", () => openSettings());
   $("engineStatus").addEventListener("click", engineClicked);
+  $("exportChat").addEventListener("click", exportChat);
   $("toggleSidebar").addEventListener("click", () => $("app").classList.toggle("collapsed"));
   $("folderChip").addEventListener("click", (e) => { e.stopPropagation(); openFolderMenu(); });
   $("safetyChip").addEventListener("click", (e) => { e.stopPropagation(); openSafetyMenu(); });

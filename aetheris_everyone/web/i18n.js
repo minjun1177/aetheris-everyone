@@ -14,6 +14,8 @@ const STRINGS = {
     "nav.earlier": "이전",
 
     "top.folder": "작업 폴더",
+    "top.export": "대화를 파일로 저장",
+    "top.export.ok": "작업 폴더에 저장했어요: {name}",
     "top.folder.open": "파일 탐색기에서 열기",
     "top.folder.change": "다른 폴더 선택…",
     "top.safety": "안전 모드",
@@ -299,6 +301,8 @@ const STRINGS = {
     "nav.earlier": "Earlier",
 
     "top.folder": "Work folder",
+    "top.export": "Save this chat as a file",
+    "top.export.ok": "Saved in the work folder: {name}",
     "top.folder.open": "Open in file manager",
     "top.folder.change": "Choose another folder…",
     "top.safety": "Safety",

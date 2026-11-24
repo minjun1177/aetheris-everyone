@@ -7,6 +7,7 @@ draws it exactly as it was.
 """
 
 import os
+import re
 import threading
 import time
 import uuid
@@ -96,6 +97,54 @@ def delete(conversation_id: str) -> None:
         index.pop(conversation_id, None)
         paths.write_json(_index_path(), index)
     history.forget(conversation_id)
+
+
+_LABELS = {
+    "ko": {"you": "나", "ai": "Aetheris", "attached": "첨부", "changes": "바뀐 파일",
+           "undone": "되돌림", "tool": "작업", "saved": "Aetheris Everyone에서 저장한 대화"},
+    "en": {"you": "You", "ai": "Aetheris", "attached": "Attached", "changes": "Files changed",
+           "undone": "undone", "tool": "Action", "saved": "Chat saved from Aetheris Everyone"},
+}
+
+
+def to_markdown(conversation: dict, language: str = "en") -> str:
+    """The chat as the person saw it, as a Markdown document anyone can open."""
+    words = _LABELS.get(language, _LABELS["en"])
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(conversation.get("created") or time.time()))
+    out = [f"# {conversation.get('title') or 'Aetheris'}", "",
+           f"_{words['saved']} · {when}_", ""]
+    for item in conversation.get("ui", []):
+        kind = item.get("kind")
+        if kind == "user":
+            out += [f"## {words['you']}", "", item.get("text") or ""]
+            names = [a.get("name", "") for a in item.get("attachments") or [] if isinstance(a, dict)]
+            if names:
+                out.append(f"\n_{words['attached']}: {', '.join(names)}_")
+            out.append("")
+        elif kind == "assistant" and item.get("text"):
+            out += [f"## {words['ai']}", "", item["text"], ""]
+        elif kind == "tool":
+            args = item.get("args") or {}
+            what = args.get("path") or args.get("query") or args.get("url") or args.get("command") \
+                or args.get("text") or ""
+            out += [f"> {words['tool']}: `{item.get('name', '')}` {what} ({item.get('status', '')})", ""]
+        elif kind == "changes":
+            title = words["changes"] + (f" ({words['undone']})" if item.get("undone") else "")
+            out += [f"**{title}:**", ""]
+            out += [f"- {f.get('kind', '')}: {f.get('path', '')}" for f in item.get("files") or []]
+            out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def export_name(conversation: dict, folder: str) -> str:
+    """A file name in `folder` for the saved chat that does not replace anything there."""
+    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", conversation.get("title") or "").strip(" .")
+    base = (title[:60].strip(" .") or "chat") + time.strftime(" (%Y-%m-%d %H%M)")
+    candidate, number = os.path.join(folder, base + ".md"), 2
+    while os.path.exists(candidate):
+        candidate = os.path.join(folder, f"{base} {number}.md")
+        number += 1
+    return candidate
 
 
 def title_from(text: str) -> str:

@@ -241,3 +241,33 @@ class CutOffUpload(ServerCase):
         self.assertIn(b'"incomplete"', answer)
         kept = [name for _, _, files in os.walk(paths.sub("attachments")) for name in files]
         self.assertEqual(kept, [])
+
+
+class SavingAChat(ServerCase):
+    def test_a_chat_is_saved_as_markdown_in_its_folder_without_replacing_anything(self):
+        from aetheris_everyone import conversations
+        conversation = conversations.new(self.work)
+        conversation["title"] = 'Budget: May/June?'
+        conversation["ui"] += [
+            {"kind": "user", "text": "Make a budget", "attachments": [{"name": "receipts.pdf"}]},
+            {"kind": "tool", "name": "write_file", "args": {"path": "budget.xlsx"}, "status": "ok"},
+            {"kind": "assistant", "text": "I made **budget.xlsx**."},
+            {"kind": "changes", "change_id": "c1", "undone": False,
+             "files": [{"kind": "created", "path": f"{self.work}/budget.xlsx"}]}]
+        conversations.save(conversation)
+        paths = []
+        for _ in range(2):
+            status, raw = self.call("/api/conversation/export", {"id": conversation["id"], "language": "en"})
+            body = json.loads(raw)
+            self.assertTrue(body["ok"], body)
+            paths.append(body["path"])
+        self.assertNotEqual(paths[0], paths[1])                       # the second does not replace the first
+        for path in paths:
+            self.assertEqual(os.path.dirname(path), self.work)
+            self.assertNotIn(":", os.path.basename(path).split(" (")[0])
+        with open(paths[0], encoding="utf-8") as f:
+            text = f.read()
+        for expected in ("# Budget: May/June?", "## You", "Make a budget", "receipts.pdf",
+                         "`write_file` budget.xlsx (ok)", "## Aetheris", "I made **budget.xlsx**.",
+                         "**Files changed:**", "- created: "):
+            self.assertIn(expected, text)

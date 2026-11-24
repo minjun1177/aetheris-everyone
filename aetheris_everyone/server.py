@@ -433,6 +433,20 @@ class Handler(BaseHTTPRequestHandler):
                                - attachment_folders(*_all_conversations()))
         return self._json({"ok": True, "conversations": conversations.list_all()})
 
+    def _post_conversation_export(self, body):
+        """Save the chat as a Markdown file in its work folder, for keeping or sharing."""
+        conversation = conversations.load(body.get("id", ""))
+        if not conversation:
+            return self._json({"ok": False, "error": "other"}, 404)
+        folder = conversation.get("folder") or settings.get("work_folder") or \
+            paths.default_work_folder()
+        os.makedirs(folder, exist_ok=True)
+        target = conversations.export_name(conversation, folder)
+        text = conversations.to_markdown(conversation, "ko" if body.get("language") == "ko" else "en")
+        with open(target, "x", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        return self._json({"ok": True, "path": target})
+
     def _post_conversation_folder(self, body):
         conversation = conversations.load(body.get("id", ""))
         folder = os.path.abspath(os.path.expanduser(str(body.get("folder") or "")))
