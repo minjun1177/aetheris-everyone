@@ -531,6 +531,12 @@ class Handler(BaseHTTPRequestHandler):
     def _post_reveal(self, body):
         return self._json({"ok": system.reveal(body.get("path", ""))})
 
+    def _post_notify(self, body):
+        if not settings.get("notify"):
+            return self._json({"ok": False})
+        return self._json({"ok": system.notify(str(body.get("title") or "Aetheris Everyone"),
+                                               str(body.get("body") or ""))})
+
     def _post_shortcut(self, body):
         return self._json({"ok": system.make_shortcut()})
 

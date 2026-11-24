@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import unittest
+import urllib.request
 
 from aetheris_everyone import ollama_setup, paths, settings
 from helpers import Sandbox
@@ -224,3 +225,43 @@ class OpeningFiles(Sandbox):
             reveal.assert_called_once_with(path)
             popen.assert_not_called()
             startfile.assert_not_called()
+
+
+class Notifications(Sandbox):
+    def test_each_system_gets_its_own_notification_with_the_text_passed_safely(self):
+        from unittest import mock
+        from aetheris_everyone import system
+        body = "Finished: \"quotes\" and 'apostrophes'; $(rm -rf ~)"
+        for platform, which in (("win32", None), ("darwin", None), ("linux", "/usr/bin/notify-send")):
+            with mock.patch.object(system.sys, "platform", platform), \
+                    mock.patch.object(system.shutil, "which", return_value=which), \
+                    mock.patch.object(system.subprocess, "Popen") as popen:
+                self.assertTrue(system.notify("Aetheris Everyone", body), platform)
+            args, kwargs = popen.call_args
+            command = args[0]
+            if platform == "win32":
+                self.assertEqual(kwargs["env"]["AE_BODY"], body)          # data, not script text
+                self.assertNotIn("apostrophes", command[-1])
+            else:
+                self.assertEqual(command[-1], body)                       # an argument, never parsed
+        with mock.patch.object(system.sys, "platform", "linux"), \
+                mock.patch.object(system.shutil, "which", return_value=None):
+            self.assertFalse(system.notify("t", "b"))
+
+    def test_turned_off_means_no_notification(self):
+        from unittest import mock
+        from aetheris_everyone import server, system
+        settings.update({"notify": False})
+        app = server.App()
+        httpd = server.serve(app)
+        try:
+            with mock.patch.object(system, "notify") as notify:
+                request = urllib.request.Request(f"http://127.0.0.1:{app.port}/api/notify",
+                                                 data=b'{"body": "x"}')
+                request.add_header("X-Token", app.token)
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    self.assertEqual(json.loads(response.read()), {"ok": False})
+            notify.assert_not_called()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()

@@ -7,6 +7,7 @@ from a separate process (Tk wants the main thread, which the server is not on).
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import webbrowser
@@ -65,6 +66,36 @@ def reveal(path: str) -> bool:
         folder = path if os.path.isdir(path) else os.path.dirname(path)
         subprocess.Popen(["xdg-open", folder], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True
+
+
+def notify(title: str, body: str) -> bool:
+    """A desktop notification, as the system shows them. False when there is no way to."""
+    title, body = str(title)[:80], " ".join(str(body).split())[:240]
+    try:
+        if sys.platform == "win32":
+            # A tray balloon: no app registration needed, unlike toast notifications.
+            script = ("Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing;"
+                      "$n = New-Object System.Windows.Forms.NotifyIcon;"
+                      "$n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true;"
+                      "$n.ShowBalloonTip(6000, $env:AE_TITLE, $env:AE_BODY, 'Info');"
+                      "Start-Sleep -Seconds 7; $n.Dispose()")
+            subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                             env=dict(os.environ, AE_TITLE=title, AE_BODY=body),
+                             creationflags=_NO_WINDOW, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        if sys.platform == "darwin":
+            subprocess.Popen(["osascript", "-e", "on run argv", "-e",
+                              "display notification (item 2 of argv) with title (item 1 of argv)",
+                              "-e", "end run", title, body],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        if shutil.which("notify-send"):
+            subprocess.Popen(["notify-send", "--app-name=Aetheris Everyone", title, body],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+    except OSError:
+        pass
+    return False
 
 
 def can_make_shortcut() -> bool:

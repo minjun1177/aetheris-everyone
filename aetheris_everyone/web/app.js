@@ -813,6 +813,20 @@ function approvalCard(event) {
   return card;
 }
 
+/* -------------------------------------------------------- notifications */
+
+// When the window is not in front, the end of a turn or a question for the person
+// is told with a system notification and a dot in the window's title.
+function windowUnseen() { return document.hidden || !document.hasFocus(); }
+
+function tellUnseen(body) {
+  if (!windowUnseen()) return;
+  if (!document.title.startsWith("● ")) document.title = "● " + document.title;
+  if (settingsNow().notify !== false) api("notify", { title: "Aetheris Everyone", body });
+}
+
+window.addEventListener("focus", () => { document.title = document.title.replace(/^● /, ""); });
+
 /* --------------------------------------------------------------- events */
 
 function connectEvents() {
@@ -852,6 +866,7 @@ function handleEvent(event) {
       break;
     case "turn_end":
       S.busy = null;
+      tellUnseen(t("notify.done", { title: (S.state && (S.state.conversations || []).find((c) => c.id === event.conversation) || {}).title || "" }));
       if (isHere(event)) {
         for (const live of Object.values(S.live)) live.el.remove();
         S.live = {};
@@ -912,6 +927,7 @@ function handleEvent(event) {
       break;
     case "approval":
       S.approvals[event.id] = event;
+      tellUnseen(t("notify.approval"));
       if (isHere(event)) { threadNode().append(approvalCard(event)); scrollDown(true); }
       renderBanner();
       break;
@@ -1596,9 +1612,19 @@ function openSettings(tab = "general") {
           class: (s.safety || "balanced") === level ? "sel" : "",
           onclick: async () => { await api("settings", { safety: level }); await refreshState(); draw(); },
         }, h("div", { class: "opt-title", text: t("safety." + level) }), h("div", { class: "opt-desc", text: t(`safety.${level}.desc`) }))))),
+      notifyField(s),
       commandsField(s),
       ...searchFields(s),
     ];
+  }
+
+  function notifyField(s) {
+    const box = h("input", { type: "checkbox" });
+    box.checked = s.notify !== false;
+    box.addEventListener("change", async () => { await api("settings", { notify: box.checked }); await refreshState(); toast(t("settings.saved")); });
+    return h("div", { class: "field" },
+      h("label", { class: "switch" }, box, h("span", { class: "track" }, h("span", { class: "thumb" })), h("span", { text: t("settings.notify") })),
+      h("small", { text: t("settings.notify.desc") }));
   }
 
   function commandsField(s) {
