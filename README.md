@@ -39,6 +39,8 @@
 | "Read the meeting notes and tell me only the decisions" | Reads Word · Excel · PowerPoint · PDF · Hangul (HWPX) and summarises |
 | "Make a weekly report template as a Word file" | Creates a real `.docx` file |
 | "Make a household budget spreadsheet for this month" | Creates a real `.xlsx` file |
+| "Make a 4-slide deck on spring health tips" | Creates a real `.pptx` file |
+| "Move only the receipt photos into a 'Receipts' folder" | Looks at each picture itself, then sorts them |
 | "Find good-value laptops and put them in a table" | Web search → read pages (and PDFs on the web) → summarise |
 | "Remember that I like reports with a summary first" | Remembers it for later chats, after asking (**Settings → Memory**) |
 | (drop a photo) "Describe this picture" | Looks at the picture (with models that can see) |
@@ -117,10 +119,17 @@ Pushing a `v*` tag makes GitHub Actions build the Windows · macOS · Linux apps
 - When permission is needed a yellow **permission card** appears, with what and why and a preview of the change: **[Allow] [Allow for this chat] [Deny]**.
 - The green card under a reply lets you **open / show in folder / undo** each changed file.
 - **Careful mode** makes it work as "plan → do → check".
+- The **model button** next to Send switches between the models of every connected AI in one click; under the box you see **how many tokens** this chat used and, for a local model, how full its memory is.
+- **Select text** in any message to **reply to that part**, ask for **a simple explanation**, or copy it.
+- Hover the last request to **edit and resend** it or **retry**; an error card has **Try again**. Files stay as they are, and their Undo cards are kept.
+- The **wand button** holds **saved requests** you use often.
+- Long chats are **summarised** instead of silently forgetting their start.
+- When the window is not in front, a **notification** says the AI finished or is waiting for permission.
 - The ⬇ button next to the chat title **saves the chat as a Markdown file** in its work folder.
 - A large phone photo is shrunk to a copy the AI can see; the original is kept as it is.
 - When the AI service is busy (rate limit) or briefly down, it **asks again by itself** (up to three times) before showing an error.
-- The 📁 button at the top changes **this chat's** work folder; the 🛡 button changes the safety level. Chats are kept on the left.
+- The 📁 button at the top changes **this chat's** work folder and holds **rules for that folder** ("file names start with the date"); the 🛡 button changes the safety level. Chats are kept on the left, with a **search box**, and the AI gives new chats a short title.
+- **Settings** open in place of the chat: General, AI connection, Memory, Saved requests, **Scheduled tasks** (run a request daily, weekly or once while the app is open), **Usage** (tokens per model per month) and **Storage** (how long undo copies are kept).
 - Korean / English, light / dark themes.
 
 ---
@@ -137,6 +146,9 @@ Everything below is set in **Settings** in the app; the environment variables ar
 | Web search engine | `auto` | `auto` = DuckDuckGo / Bing (via `ddgs`). `searxng` = **your own SearXNG** only; queries go nowhere else. |
 | SearXNG address | — | e.g. `http://192.168.0.10:8080`. The instance must list `json` under `search: formats:` in its `settings.yml`. Checked with **[Check connection]** before it is saved. |
 | Memory length | `16384` | Ollama context size (`num_ctx`). |
+| Keep undo copies for | `90` days | **Settings → Storage**. `0` = never clear. Older actions can no longer be undone. |
+| Notify me when it is done | on | A system notification when a turn ends or asks for permission while the window is not in front. |
+| Let the AI name chats | on | A short title from the model after a new chat's first answer. |
 | Remember things about me | on | **Settings → Memory**. The AI may save short facts (your name, how you like documents) for later chats, asking each time. Saved facts are listed there and can be deleted. |
 
 ---
@@ -170,12 +182,16 @@ aetheris-everyone/
 │   ├── server.py        127.0.0.1-only HTTP + live events (SSE); token and Host checks
 │   ├── agent.py         one turn: stream → tool calls → permission → results → repeat
 │   ├── toolcalls.py     repairs broken tool calls from small models (from Aetheris)
-│   ├── tools.py         15 tools and their safety checks (paths, safety level, undo record)
+│   ├── tools.py         16 tools and their safety checks (paths, safety level, undo record)
 │   ├── memory.py        what the AI remembers between chats (asked first, listed in Settings)
+│   ├── folder_rules.py  standing rules the person sets for a work folder
+│   ├── saved_requests.py  requests saved to reuse with one click
+│   ├── schedules.py     requests that run by themselves (once, daily, weekly)
+│   ├── usage.py         tokens used per model, month by month
 │   ├── history.py       undo without git: originals kept aside, conflict detection
 │   ├── providers.py     Ollama · Claude · ChatGPT · Gemini (urllib only)
 │   ├── ollama_setup.py  find / start / install Ollama (checksum-verified), model download progress
-│   ├── documents.py     read docx/xlsx/pptx/hwpx/pdf, write docx/xlsx
+│   ├── documents.py     read docx/xlsx/pptx/hwpx/pdf, write docx/xlsx/pptx
 │   ├── websearch.py     web search (ddgs, DuckDuckGo, Bing or SearXNG), page and PDF text; blocks the local network
 │   ├── settings.py      settings, and API keys in the system password store
 │   ├── prompts.py       what the model is told
@@ -210,5 +226,5 @@ aetheris-everyone/
 | Setup | `pip install`, `ollama pull` | **Double-click** · the app installs/starts Ollama and downloads models |
 | Undo | git commits (`/undo`) | **Its own change history, no git** · one button · conflict detection |
 | Permission | Terminal y/n | **Permission cards with a preview**, three safety levels |
-| Documents | Mostly code | **Creates Word · Excel**, reads PDF · PPT · HWPX, CSV that opens correctly in Korean Excel |
-| Carried over | | Tool-call repair engine for small local models, native and text tool protocols, repeated-call and refusal detection, Ollama · Anthropic · OpenAI · Gemini connections, retrying a busy service, memory between chats, saving a chat as Markdown |
+| Documents | Mostly code | **Creates Word · Excel · PowerPoint**, reads PDF · HWPX, CSV that opens correctly in Korean Excel |
+| Carried over | | Tool-call repair engine for small local models, native and text tool protocols, repeated-call and refusal detection, Ollama · Anthropic · OpenAI · Gemini connections, retrying a busy service, memory between chats, saving a chat as Markdown, looking at pictures, rewinding a request, summarising long chats, chat titles, scheduled requests |
