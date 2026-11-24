@@ -13,6 +13,9 @@ Categories decide the asking:
     run     start a program                     - off unless turned on in Settings; then
                                                   asked at every safety level
     web     search, read a public page          - never asked; nothing local changes
+    memory  remember something for later chats  - asked at every safety level: it reaches
+                                                  every later chat, so text in a web page
+                                                  must not be able to plant it unseen
 """
 
 import fnmatch
@@ -26,7 +29,7 @@ import sys
 import threading
 import time
 
-from aetheris_everyone import documents, history, paths, settings, websearch
+from aetheris_everyone import documents, history, memory, paths, settings, websearch
 
 RESULT_LIMIT = 12_000
 READ_LINES = 400
@@ -94,6 +97,8 @@ class Context:
             needed.add("change")
         if category == "run":
             needed.add("run")        # every program run is shown and asked, never granted ahead
+        if category == "memory" and "memory" not in self.granted:
+            needed.add("memory")
         if not needed:
             return
         if self.cancelled.is_set():
@@ -622,6 +627,28 @@ def run_command(ctx: Context, command: str, reason: str = "", timeout_seconds: i
     return f"Command finished (exit code 0).\nOutput:\n{body}"
 
 
+def remember(ctx: Context, text: str) -> str:
+    if not settings.get("memory"):
+        raise ToolError("remembering is turned off in this app's Settings")
+    text = memory.clean(text)
+    if not text:
+        raise ToolError("text is required: the one fact to remember")
+    ctx.permit("memory", {"tool": "remember", "text": text})
+    try:
+        item = memory.add(text)
+    except ValueError as error:
+        raise ToolError(str(error)) from None
+    return f"Remembered as [{item['id']}]: {item['text']}"
+
+
+def forget(ctx: Context, memory_id: str) -> str:
+    memory_id = str(memory_id or "").strip().strip("[]")
+    if not memory.remove(memory_id):
+        raise ToolError(f"there is no memory [{memory_id}]. The saved ones are listed in your "
+                        "instructions with their ids.")
+    return f"Forgot [{memory_id}]."
+
+
 def web_search(ctx: Context, query: str) -> str:
     if not query:
         raise ToolError("query is required")
@@ -727,6 +754,17 @@ TOOLS = [
                                            "and why, in the user's language."),
                     "timeout_seconds": _p("integer", "Stop it after this many seconds (default 120).")},
      "required": ["command", "reason"]},
+    {"name": "remember", "category": "memory", "fn": remember,
+     "description": "Remember one short fact about the person for all later chats: their name, "
+                    "how they like documents written, a standing preference. Not for details "
+                    "of today's task. The person is asked first.",
+     "properties": {"text": _p("string", "The fact, in one short sentence.")},
+     "required": ["text"]},
+    {"name": "forget", "category": "memory", "fn": forget,
+     "description": "Delete one remembered fact, by its id (like m1a2b3c), when the person asks "
+                    "you to forget it or it is no longer true.",
+     "properties": {"memory_id": _p("string", "The id of the memory to delete.")},
+     "required": ["memory_id"]},
     {"name": "web_search", "category": "web", "fn": web_search,
      "description": "Search the web. Returns titles, links and short snippets.",
      "properties": {"query": _p("string", "What to search for.")},
@@ -748,7 +786,9 @@ ALIASES = {"read": "read_file", "open_file": "read_file", "cat": "read_file",
            "remove": "delete", "rm": "delete", "run": "run_command", "run_cmd": "run_command",
            "shell": "run_command", "search": "web_search", "search_web": "web_search",
            "fetch": "read_webpage", "browse": "read_webpage", "fetch_url": "read_webpage",
-           "grep": "search_text", "find": "find_files", "glob": "find_files"}
+           "grep": "search_text", "find": "find_files", "glob": "find_files",
+           "save_memory": "remember", "write_memory": "remember", "memorize": "remember",
+           "delete_memory": "forget", "forget_memory": "forget"}
 
 # Argument names small models use for the real ones.
 _ARG_ALIASES = {"filepath": "path", "file_path": "path", "filename": "path", "file": "path",
@@ -756,7 +796,8 @@ _ARG_ALIASES = {"filepath": "path", "file_path": "path", "filename": "path", "fi
                 "dst": "destination", "dest": "destination", "target": "destination",
                 "to": "destination", "from": "source", "old_content": "old_text",
                 "new_content": "new_text", "old": "old_text", "new": "new_text", "text_to_find": "text",
-                "cmd": "command", "q": "query", "link": "url", "body": "content", "data": "content"}
+                "cmd": "command", "q": "query", "link": "url", "body": "content", "data": "content",
+                "id": "memory_id", "fact": "text", "memory": "text"}
 
 
 def lookup(name: str):
@@ -764,8 +805,11 @@ def lookup(name: str):
 
 
 def offered(commands: bool) -> list:
-    """The tools the model is told about: run_command only when running programs is on."""
-    return [t for t in TOOLS if commands or t["category"] != "run"]
+    """The tools the model is told about: run_command only when running programs is on,
+    and the memory tools only while remembering is."""
+    remembering = bool(settings.get("memory"))
+    return [t for t in TOOLS if (commands or t["category"] != "run")
+            and (remembering or t["category"] != "memory")]
 
 
 def schemas(commands: bool = True) -> list:

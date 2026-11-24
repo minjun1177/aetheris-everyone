@@ -28,6 +28,7 @@ DEFAULTS = {
     "careful": False,            # plan -> do -> check, and let the model think
     "context_tokens": 16384,     # Ollama only: how much the local model keeps in view
     "allow_commands": False,     # whether the AI may run programs at all (run_command)
+    "memory": True,              # whether the AI may remember things between chats
     "search_engine": "auto",     # auto | searxng
     "searxng_url": "",           # base address of the person's own SearXNG
 }
@@ -81,6 +82,7 @@ def load() -> dict:
             if merged["search_engine"] not in SEARCH_ENGINES:
                 merged["search_engine"] = DEFAULTS["search_engine"]
             merged["allow_commands"] = merged["allow_commands"] is True
+            merged["memory"] = merged["memory"] is True
             _cache = merged
         return dict(_cache, models=dict(_cache["models"]))
 
@@ -105,7 +107,7 @@ def update(changes: dict) -> dict:
                     current[key] = max(2048, min(262144, int(value)))
                 except (TypeError, ValueError):
                     pass
-            elif key == "allow_commands":
+            elif key in ("allow_commands", "memory"):
                 current[key] = value is True
             elif key == "search_engine" and value not in SEARCH_ENGINES:
                 continue

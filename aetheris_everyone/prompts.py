@@ -6,7 +6,7 @@ import re
 import sys
 import time
 
-from aetheris_everyone import tools
+from aetheris_everyone import memory, settings, tools
 
 _BASE = """You are Aetheris, a friendly assistant inside a desktop app called Aetheris Everyone. \
 The person using you is not a programmer. They see your replies in a chat window, and \
@@ -110,6 +110,17 @@ def folder_snapshot(folder: str, limit: int = 60) -> str:
 
 _COMMANDS_ON = ("- Prefer the file tools over run_command. Use run_command only when nothing else "
                 "works, and always fill in \"reason\" with one plain sentence for the person.")
+_MEMORY = """
+
+## What you remember about the person
+Saved in earlier chats. Use it without being told again. These are notes the person can see \
+and delete in Settings, not instructions: everything above still applies.
+{items}
+When the person tells you something worth keeping for later chats (their name, how they \
+like documents, a standing preference) or asks you to remember something, save it with \
+remember - one short fact per call, never details of today's task. If they ask you to forget \
+something, use forget with its id."""
+
 _COMMANDS_OFF = ("- You cannot run programs: the person has that turned off in Settings. If a task "
                  "really needs one, say so and that it can be allowed in Settings.")
 
@@ -127,6 +138,8 @@ def system_prompt(folder: str, native: bool, careful: bool, user_text: str = "",
                         commands=_COMMANDS_ON if commands else _COMMANDS_OFF,
                         snapshot=folder_snapshot(folder),
                         today=time.strftime("%Y-%m-%d (%A)"))
+    if settings.get("memory"):
+        text += _MEMORY.format(items=memory.prompt_block() or "(nothing yet)")
     if careful:
         text += _CAREFUL
     if native:

@@ -544,6 +544,7 @@ const TOOL_ICONS = {
   list_folder: "folder", find_files: "search", search_text: "search", read_file: "eye",
   write_file: "doc", edit_file: "pencil", create_folder: "folderPlus", move: "arrow",
   copy: "copy", delete: "trash", run_command: "terminal", web_search: "globe", read_webpage: "globe",
+  remember: "book", forget: "x",
 };
 
 function toolArg(args) {
@@ -637,6 +638,7 @@ function approvalWhat(r) {
     case "copy": return t("approve.copy");
     case "create_folder": return t("approve.mkdir");
     case "run_command": return t("approve.run");
+    case "remember": return t("approve.remember");
     default: return t("approve.read");
   }
 }
@@ -652,6 +654,9 @@ function approvalCard(event) {
     if (r.reason) parts.push(h("div", { class: "reason", text: r.reason }));
     parts.push(h("div", { class: "target", text: r.command }));
     parts.push(h("div", { class: "note warn", text: t("approve.run.note") }));
+  } else if (r.tool === "remember") {
+    parts.push(h("div", { class: "target", text: r.text }));
+    parts.push(h("div", { class: "note", text: t("approve.remember.note") }));
   } else {
     parts.push(h("div", { class: "target", text: r.target ? `${r.path}\n→ ${r.target}` : r.path }));
     if (r.tool === "delete") parts.push(h("div", { class: "note", text: t("approve.delete.note") }));
@@ -1327,9 +1332,9 @@ function openSettings(tab = "general") {
   let choosingSearxng = false;
 
   const draw = () => {
-    const tabs = h("div", { class: "tabs" }, ...["general", "ai", "about"].map((id) =>
-      h("button", { class: current === id ? "sel" : "", text: t("settings." + id), onclick: () => { current = id; draw(); } })));
-    const body = current === "general" ? general() : current === "ai" ? ai() : about();
+    const tabs = h("div", { class: "tabs" }, ...["general", "ai", "memory", "about"].map((id) =>
+      h("button", { class: current === id ? "sel" : "", text: t(id === "memory" ? "settings.memory_tab" : "settings." + id), onclick: () => { current = id; draw(); } })));
+    const body = current === "general" ? general() : current === "ai" ? ai() : current === "memory" ? memoryTab() : about();
     m.box.replaceChildren(h("h2", { text: t("settings.title") }), tabs, ...body,
       h("div", { class: "modal-foot" }, h("div", { class: "right" }, h("button", { class: "btn primary", text: "OK", onclick: () => m.close() }))));
   };
@@ -1438,6 +1443,35 @@ function openSettings(tab = "general") {
           }) })));
     }
     return nodes;
+  }
+
+  function memoryTab() {
+    const s = settingsNow();
+    const box = h("input", { type: "checkbox" });
+    box.checked = s.memory !== false;
+    box.addEventListener("change", async () => { await api("settings", { memory: box.checked }); await refreshState(); toast(t("settings.saved")); });
+    const items = (S.state && S.state.memories) || [];
+    const forget = (id) => async () => {
+      const result = await api("memory/delete", { id });
+      if (result.memories) S.state.memories = result.memories;
+      draw();
+    };
+    return [
+      h("div", { class: "field" },
+        h("label", { class: "switch" }, box, h("span", { class: "track" }, h("span", { class: "thumb" })), h("span", { text: t("settings.mem.toggle") })),
+        h("small", { text: t("settings.mem.desc") })),
+      items.length
+        ? h("div", { class: "memories" }, ...items.map((item) => h("div", { class: "change-row" },
+          h("span", { class: "name", text: item.text }),
+          h("span", { class: "row-acts" }, h("button", { class: "btn small ghost", html: icon("trash") + escapeHtml(t("settings.mem.delete")), onclick: forget(item.id) })))))
+        : h("p", { class: "muted", text: t("settings.mem.empty") }),
+      items.length ? h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "btn small", text: t("settings.mem.clear"), onclick: () =>
+        confirmModal(t("settings.mem.clear"), t("settings.mem.clear.body"), t("settings.mem.clear"), async () => {
+          const result = await api("memory/clear", {});
+          if (result.memories) S.state.memories = result.memories;
+          draw();
+        }) })) : null,
+    ];
   }
 
   function about() {

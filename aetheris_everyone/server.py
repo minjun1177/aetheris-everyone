@@ -20,8 +20,8 @@ import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from aetheris_everyone import (__version__, agent, conversations, history, ollama_setup, paths,
-                               providers, settings, system, websearch)
+from aetheris_everyone import (__version__, agent, conversations, history, memory, ollama_setup,
+                               paths, providers, settings, system, websearch)
 
 MAX_UPLOAD = 200 * 1024 * 1024
 
@@ -81,6 +81,7 @@ class App:
                 "model": settings.model_for(name), "busy": self.agent.busy,
                 "approvals": self.agent.pending_approvals(),
                 "conversations": conversations.list_all(),
+                "memories": memory.load(),
                 "jobs": self.bus.last_job, "job_running": bool(self.job_thread
                                                                 and self.job_thread.is_alive()),
                 "default_folder": paths.default_work_folder(),
@@ -462,6 +463,14 @@ class Handler(BaseHTTPRequestHandler):
                     "replies was reverted. Files are back to how they were before it.")})
                 conversations.save(conversation)
         return self._json(result)
+
+    def _post_memory_delete(self, body):
+        memory.remove(str(body.get("id") or ""))
+        return self._json({"ok": True, "memories": memory.load()})
+
+    def _post_memory_clear(self, body):
+        memory.clear()
+        return self._json({"ok": True, "memories": []})
 
     def _post_pick_folder(self, body):
         return self._json({"path": system.pick_folder(body.get("initial") or "")})
