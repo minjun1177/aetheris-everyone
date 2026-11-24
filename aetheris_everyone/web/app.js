@@ -718,6 +718,7 @@ function changesCard(item) {
       h("button", { class: "btn small ghost", text: t("changes.reveal"), onclick: () => api("reveal", { path: f.path }) }))));
   const foot = h("div", { class: "changes-foot" }, item.undone
     ? h("span", { class: "badge", html: icon("undo") + escapeHtml(t("changes.undone")) })
+    : item.expired ? h("span", { class: "badge", html: icon("info") + escapeHtml(t("changes.expired")) })
     : h("button", { class: "btn small", html: icon("undo") + escapeHtml(t("changes.undo")), onclick: () => undoChanges(item, false) }));
   card.append(h("div", { class: "changes-head", html: icon("checkCircle") + escapeHtml(t("changes.title", { n: files.length })) }), ...rows, foot);
   return card;
@@ -1533,7 +1534,7 @@ function openSetup(startStep = 0) {
 // Settings open in the main area, in place of the chat (like a desktop app's
 // preferences page), with their sections listed down the left.
 const SETTINGS_SECTIONS = [
-  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["usage", "table"], ["about", "info"],
+  ["general", "gear"], ["ai", "chip"], ["memory", "book"], ["usage", "table"], ["storage", "trash"], ["about", "info"],
 ];
 const SETTINGS_PAGES = {};
 
@@ -1711,7 +1712,36 @@ function openSettings(tab = "general") {
     ];
   }
 
-  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, usage: usagePage, about });
+  Object.assign(SETTINGS_PAGES, { general, ai, memory: memoryTab, usage: usagePage, storage: storagePage, about });
+
+  function storagePage() {
+    const s = settingsNow();
+    const sizes = h("div", { class: "kv" }, h("span", { class: "muted", text: t("model.loading") }));
+    const load = () => api("storage").then((r) => {
+      sizes.replaceChildren(
+        h("span", { text: t("storage.history") }), h("span", { class: "v", text: `${formatBytes(r.history.bytes)} · ${t("storage.sets", { n: r.history.sets })}` }), h("span"),
+        h("span", { text: t("storage.attachments") }), h("span", { class: "v", text: formatBytes(r.attachments) }), h("span"));
+    });
+    load();
+    const prune = (all) => async () => {
+      const result = await api("storage/prune", { all });
+      toast(t("storage.pruned", { n: result.removed || 0 }));
+      load();                     // the chat is drawn again, without those Undo buttons, on the way back
+    };
+    return [
+      h("p", { class: "lead muted", text: t("storage.lead") }),
+      sizes,
+      h("div", { class: "field" }, h("label", { text: t("storage.keep") }),
+        select([["7", t("storage.days", { n: 7 })], ["30", t("storage.days", { n: 30 })], ["90", t("storage.days", { n: 90 })],
+          ["365", t("storage.days", { n: 365 })], ["0", t("storage.forever")]], String(s.history_days ?? 90),
+          async (v) => { await api("settings", { history_days: Number(v) }); await refreshState(); toast(t("settings.saved")); }),
+        h("small", { text: t("storage.keep.desc") })),
+      h("div", { class: "row", style: "margin-top:12px; flex-wrap: wrap" },
+        h("button", { class: "btn small", text: t("storage.prune.old"), onclick: prune(false) }),
+        h("button", { class: "btn small", text: t("storage.prune.all"), onclick: () =>
+          confirmModal(t("storage.prune.all"), t("storage.prune.all.body"), t("storage.prune.all"), prune(true)) })),
+    ];
+  }
 
   function usagePage() {
     const area = h("div", {}, h("p", { class: "muted", text: t("model.loading") }));

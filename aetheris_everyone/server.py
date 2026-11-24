@@ -193,6 +193,10 @@ class Handler(BaseHTTPRequestHandler):
             if route == "conversation":
                 data = conversations.load((query.get("id") or [""])[0])
                 return self._json(data or {"error": "not_found"}, 200 if data else 404)
+            if route == "storage":
+                return self._json({"history": history.storage(),
+                                   "attachments": history.folder_size(_attachments_root()),
+                                   "days": settings.get("history_days")})
             if route == "usage":
                 return self._json({"months": usage.summary()})
             if route == "ollama/status":
@@ -496,6 +500,15 @@ class Handler(BaseHTTPRequestHandler):
                 conversations.save(conversation)
         return self._json(result)
 
+    def _post_storage_prune(self, body):
+        """Empty the undo history: all of it, or what is older than the kept days."""
+        days = int(settings.get("history_days") or 0)
+        if not body.get("all") and not days:
+            return self._json({"ok": True, "removed": 0})
+        cutoff = time.time() if body.get("all") else time.time() - days * 86400
+        removed = expire_changes(cutoff, skip=self.app.agent.busy or "")
+        return self._json({"ok": True, "removed": removed, "history": history.storage()})
+
     def _post_memory_delete(self, body):
         memory.remove(str(body.get("id") or ""))
         return self._json({"ok": True, "memories": memory.load()})
@@ -561,6 +574,27 @@ def recover_changes() -> int:
         if missing:
             conversations.save(conversation)
     return restored
+
+
+def expire_changes(cutoff: float, skip: str = "") -> int:
+    """Delete undo copies made before `cutoff` and mark their cards as no longer undoable."""
+    removed = history.prune(cutoff, skip)
+    for conversation_id, change_ids in removed.items():
+        conversation = conversations.load(conversation_id)
+        if not conversation:
+            continue
+        for item in conversation["ui"]:
+            if item.get("kind") == "changes" and item.get("change_id") in change_ids:
+                item["expired"] = True
+        conversations.save(conversation)
+    return sum(len(ids) for ids in removed.values())
+
+
+def prune_history() -> None:
+    """At start: drop undo copies older than the kept days (Settings → Storage)."""
+    days = int(settings.get("history_days") or 0)
+    if days:
+        expire_changes(time.time() - days * 86400)
 
 
 def _attachments_root() -> str:

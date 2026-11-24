@@ -304,3 +304,46 @@ class TakingBack(ServerCase):
             self.assertEqual(json.loads(raw)["error"], "busy")
         finally:
             self.app.agent.busy = None
+
+
+class UndoStorage(ServerCase):
+    def test_old_undo_copies_are_cleared_and_their_cards_say_so(self):
+        import time
+        from aetheris_everyone import conversations, history, settings
+        conversation = conversations.new(self.work)
+        conversations.save(conversation)
+        sets = []
+        for name in ("old.txt", "new.txt"):
+            path = os.path.join(self.work, name)
+            with open(path, "w") as f:
+                f.write("x")
+            changes = history.ChangeSet(conversation["id"])
+            changes.delete(path)                       # kept aside for undo
+            sets.append(changes)
+            conversation["ui"].append({"kind": "changes", "change_id": changes.id, "files": changes.files()})
+        conversations.save(conversation)
+        manifest = os.path.join(sets[0].dir, "manifest.json")
+        data = json.load(open(manifest))
+        data["time"] = time.time() - 100 * 86400
+        with open(manifest, "w") as f:
+            json.dump(data, f)
+        self.assertEqual(history.storage()["sets"], 2)
+        settings.update({"history_days": 90})
+        server.prune_history()
+        self.assertFalse(os.path.exists(sets[0].dir))
+        self.assertTrue(os.path.exists(sets[1].dir))
+        cards = conversations.load(conversation["id"])["ui"]
+        self.assertEqual([c.get("expired", False) for c in cards], [True, False])
+        status, raw = self.call("/api/storage/prune", {"all": True})
+        self.assertEqual(json.loads(raw)["removed"], 1)
+        self.assertEqual(history.storage(), {"bytes": 0, "sets": 0})
+        status, raw = self.call("/api/storage")
+        self.assertEqual(json.loads(raw)["days"], 90)
+
+    def test_never_clearing_keeps_everything(self):
+        from aetheris_everyone import settings
+        settings.update({"history_days": 0})
+        status, raw = self.call("/api/storage/prune", {})
+        self.assertEqual(json.loads(raw)["removed"], 0)
+        settings.update({"history_days": "x"})
+        self.assertEqual(settings.get("history_days"), 0)

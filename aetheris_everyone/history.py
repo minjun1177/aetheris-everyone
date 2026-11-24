@@ -244,6 +244,63 @@ def recorded(conversation_id: str) -> list:
     return found
 
 
+def folder_size(folder: str) -> int:
+    total = 0
+    for current, _dirs, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(current, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def storage() -> dict:
+    """What the undo history keeps on disk: {"bytes", "sets"}."""
+    root = os.path.join(paths.data_dir(), "history")
+    if not os.path.isdir(root):
+        return {"bytes": 0, "sets": 0}
+    sets = 0
+    for conversation_id in os.listdir(root):
+        folder = os.path.join(root, conversation_id)
+        if os.path.isdir(folder):
+            sets += sum(1 for name in os.listdir(folder) if os.path.isdir(os.path.join(folder, name)))
+    return {"bytes": folder_size(root), "sets": sets}
+
+
+def prune(older_than: float, skip: str = "") -> dict:
+    """Delete change sets recorded before `older_than` (a time.time() value).
+
+    Their files can then no longer be undone. Returns {conversation id: [change ids]}.
+    `skip` is a conversation whose turn is running.
+    """
+    root = os.path.join(paths.data_dir(), "history")
+    removed: dict = {}
+    if not os.path.isdir(root):
+        return removed
+    for conversation_id in os.listdir(root):
+        if conversation_id == skip:
+            continue
+        folder = os.path.join(root, conversation_id)
+        for change_id in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+            change_dir = os.path.join(folder, change_id)
+            manifest = paths.read_json(os.path.join(change_dir, "manifest.json"))
+            when = manifest.get("time") if isinstance(manifest, dict) else None
+            if not isinstance(when, (int, float)):
+                try:
+                    when = os.path.getmtime(change_dir)
+                except OSError:
+                    continue
+            if when < older_than:
+                shutil.rmtree(change_dir, ignore_errors=True)
+                removed.setdefault(conversation_id, []).append(change_id)
+        try:
+            os.rmdir(folder)                  # only once it is empty
+        except OSError:
+            pass
+    return removed
+
+
 def forget(conversation_id: str) -> None:
     shutil.rmtree(os.path.join(paths.data_dir(), "history", os.path.basename(conversation_id)),
                   ignore_errors=True)

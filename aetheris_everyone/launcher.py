@@ -168,6 +168,7 @@ def main(argv: list | None = None) -> int:
                      private=True)
     threading.Thread(target=_warm_up, daemon=True).start()
     threading.Thread(target=server.clean_attachments, daemon=True).start()
+    threading.Thread(target=server.prune_history, daemon=True).start()
     try:
         if headless:
             print(url, flush=True)

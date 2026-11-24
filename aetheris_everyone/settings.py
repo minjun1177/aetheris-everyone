@@ -29,6 +29,7 @@ DEFAULTS = {
     "context_tokens": 16384,     # Ollama only: how much the local model keeps in view
     "allow_commands": False,     # whether the AI may run programs at all (run_command)
     "memory": True,              # whether the AI may remember things between chats
+    "history_days": 90,          # how long undo copies are kept; 0 = until emptied by hand
     "search_engine": "auto",     # auto | searxng
     "searxng_url": "",           # base address of the person's own SearXNG
 }
@@ -109,6 +110,11 @@ def update(changes: dict) -> dict:
                     pass
             elif key in ("allow_commands", "memory"):
                 current[key] = value is True
+            elif key == "history_days":
+                try:
+                    current[key] = max(0, min(3650, int(value)))
+                except (TypeError, ValueError):
+                    pass
             elif key == "search_engine" and value not in SEARCH_ENGINES:
                 continue
             elif key in ("ollama_host", "searxng_url"):
