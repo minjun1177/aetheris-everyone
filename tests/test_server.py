@@ -154,7 +154,7 @@ class InterruptedTurn(ServerCase):
         conversation = conversations.new(self.work)
         conversations.save(conversation)
         changes = history.ChangeSet(conversation["id"])     # what a turn cut short leaves behind
-        path = f"{self.work}/made.txt"
+        path = os.path.join(self.work, "made.txt")
         changes.before_write(path)
         with open(path, "w") as f:
             f.write("x")
