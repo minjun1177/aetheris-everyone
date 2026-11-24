@@ -664,9 +664,10 @@ function approvalCard(event) {
     card.classList.add("answered");
     await api("approve", { id: event.id, answer: value });
   };
+  // A program is asked about every time: "for this chat" is not offered for it.
   parts.push(h("div", { class: "acts" },
     h("button", { class: "btn primary", html: icon("check") + escapeHtml(t("approve.allow")), onclick: answer("allow") }),
-    h("button", { class: "btn", text: t("approve.always"), onclick: answer("always") }),
+    r.tool === "run_command" ? null : h("button", { class: "btn", text: t("approve.always"), onclick: answer("always") }),
     h("button", { class: "btn ghost", html: icon("x") + escapeHtml(t("approve.deny")), onclick: answer("deny") })));
   card.append(...parts);
   return card;

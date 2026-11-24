@@ -106,6 +106,13 @@ class FileTools(Sandbox):
         self.assertNotIn("run_command", [t["name"] for t in tools.schemas(commands=False)])
         self.assertNotIn("run_command", tools.text_protocol_catalog(commands=False))
 
+    def test_allow_for_this_chat_never_covers_the_next_command(self):
+        ctx = self.context(safety="auto", answer="always", commands=True)
+        tools.dispatch(ctx, "run_command", {"command": "echo a"})
+        tools.dispatch(ctx, "run_command", {"command": "echo b"})
+        self.assertEqual(len(self.asked), 2)
+        self.assertNotIn("run", ctx.granted)
+
     def test_auto_mode_asks_before_every_command(self):
         ctx = self.context(safety="auto", commands=True)
         status, _, _ = tools.dispatch(ctx, "run_command", {"command": "echo a"})

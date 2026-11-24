@@ -88,15 +88,15 @@ class Context:
             needed.add("outside")
         if category == "change" and self.safety == "ask" and "change" not in self.granted:
             needed.add("change")
-        if category == "run" and "run" not in self.granted:
-            needed.add("run")
+        if category == "run":
+            needed.add("run")        # every program run is shown and asked, never granted ahead
         if not needed:
             return
         if self.cancelled.is_set():
             raise Denied("stopped by the user")
         answer = self.ask(dict(request, category=category, outside=outside))
         if answer == "always":
-            self.granted.update(needed)
+            self.granted.update(needed - {"run"})
         elif answer != "allow":
             raise Denied("the user said no")
 
